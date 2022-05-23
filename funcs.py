@@ -10,13 +10,10 @@ from pycoingecko import CoinGeckoAPI
 cg = CoinGeckoAPI()
 # Update local time
 local_time = datetime.datetime.now()
-
-
 # Create directory to store files
-def setup():
-    path = '../files/'
-    path = Path(path)
-    path.mkdir(exist_ok=True)
+files_path = 'files/'
+path = Path(files_path)
+path.mkdir(exist_ok=True)
 
 
 # Get current time

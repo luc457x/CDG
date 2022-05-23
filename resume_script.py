@@ -1,13 +1,10 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # coding: utf-8
 
 from funcs import *
 
 """Setup"""
 # Create directory to store files
-files_path = '../files/'
-path = Path(files_path)
-path.mkdir(exist_ok=True)
 Path(files_path + str(local_time.date())).mkdir(exist_ok=True)
 
 """Script"""
