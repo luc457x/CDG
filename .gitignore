@@ -1,0 +1,5 @@
+*.png
+*.xlsx
+.idea/
+**/__pycache__/
+/files/
