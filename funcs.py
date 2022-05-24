@@ -11,7 +11,7 @@ cg = CoinGeckoAPI()
 # Update local time
 local_time = datetime.datetime.now()
 # Create directory to store files
-files_path = 'files/'
+files_path = 'CDG_files/'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
 
