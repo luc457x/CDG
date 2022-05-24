@@ -8,7 +8,7 @@ from funcs import *
 Path(files_path + str(local_time.date())).mkdir(exist_ok=True)
 
 """Script"""
-with pd.ExcelWriter(files_path + '/%s/daily_report.xlsx' % str(local_time.date())) as writer:
+with pd.ExcelWriter(files_path + f'/{str(local_time.date())}/daily_report.xlsx') as writer:
     df = get_total_mkt_cap()
     df.copy().to_excel(writer, sheet_name='total market cap')
     df = get_defi_mkt()
