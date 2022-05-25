@@ -8,6 +8,6 @@ from funcs import *
 Path(files_path + str(local_time.date())).mkdir(exist_ok=True)
 
 """Script"""
-with pd.ExcelWriter(files_path + '/%s/trending.xlsx' % str(local_time.date())) as writer:
+with pd.ExcelWriter(files_path + f'/{str(local_time.date())}/trending.xlsx') as writer:
     df = get_trending()
     df.copy().to_excel(writer, sheet_name=f'{str(local_time.hour)}')
