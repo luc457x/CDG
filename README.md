@@ -1,3 +1,3 @@
 # CryptoDataGathering
 
-Scripts to automate cryptocurrency's data gathering using CRONTAB.
+Cryptocurrency's data gathering lib.
