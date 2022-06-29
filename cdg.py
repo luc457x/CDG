@@ -1,5 +1,8 @@
 # coding: utf-8
 
+# TODO: Find a way to put the timestamp on all returned dataframes.
+# TODO: Make docstring for all functions.
+
 import datetime
 import pandas as pd
 from pycoingecko import CoinGeckoAPI
@@ -8,18 +11,40 @@ cg = CoinGeckoAPI()
 local_time = datetime.datetime.now()
 
 
+def get_server_status():
+    return cg.ping()
+
+
+def get_currency_support(name='all'):
+    currencies = cg.get_supported_vs_currencies()
+    if name == 'all':
+        return currencies
+    else:
+        for x in currencies:
+            if name.lower() in x.lower():
+                return True
+            else:
+                return False
+
+
+def get_coin_id(name='all'):
+    coins = cg.get_coins_list()
+    if name == 'all':
+        return coins
+    else:
+        for x in coins:
+            if x['name'].lower() == name.lower():
+                return x
+            else:
+                return f'"{name}" currently not supported.'
+
+
 def get_time():
-    """
-    Update local_time.
-    """
     global local_time
     local_time = datetime.datetime.now()
 
 
 def get_pub_treasury_data():
-    """
-    Get bitcoin and ethereum institutional public treasures data.
-    """
     get_time()
     value_usd = {}
     btc_pub_treasury = cg.get_companies_public_treasury_by_coin_id('bitcoin')
@@ -29,47 +54,38 @@ def get_pub_treasury_data():
     value_usd.update({'total': value_usd['btc'] + value_usd['eth']})
     df = pd.DataFrame(value_usd, index=[str(local_time.timestamp())])
     df.index.name = 'timestamp'
+    df.reset_index(inplace=True)
     return df
 
 
 def get_total_mkt_cap():
-    """
-    Get total market capitalization.
-    """
     get_time()
     global_data = cg.get_global()
     total_market_cap = {'usd': global_data['total_market_cap']['usd'], 'btc': global_data['total_market_cap']['btc']}
     df = pd.DataFrame(total_market_cap, index=[str(local_time.timestamp())])
     df.index.name = 'timestamp'
+    df.reset_index(inplace=True)
     return df
 
 
 def get_mkt_top100():
-    """
-    Get top100 coins market data.
-    """
     get_time()
     data = cg.get_coins_markets(vs_currency='usd', per_page=100)
     df = pd.DataFrame(data, columns=['market_cap_rank', 'id', 'symbol', 'current_price', 'price_change_percentage_24h',
                                      'low_24h', 'high_24h', 'total_volume'])
-    df = df.set_index(['market_cap_rank'])
+    df.reset_index(inplace=True)
     return df
 
 
-def get_pair(x, y):
-    """
-    Get coin market data, 'x' is ID of coin (ex: 'bitcoin') and 'y' the currency to compare (ex: 'usd').
-    """
+def get_pair(x='bitcoin', y='usd'):
     get_time()
     data = cg.get_price(x, y, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
+    df.reset_index(inplace=True)
     return df
 
 
 def get_coins(*args):
-    """
-    Get multiple coins and compare with USD.
-    """
     df = pd.DataFrame()
     c = 0
     for x in args:
@@ -79,17 +95,11 @@ def get_coins(*args):
         else:
             df = df0
         c += 1
+    df.reset_index(inplace=True)
     return df
 
 
-def get_coin_hist_data(x, y, z):
-    """
-    Get coin historical market data.
-    'x' is the ID of the coin, 'y' the symbol of the currency to compare
-    and 'z' being the number of days back from today to get data (ex:1,2,5,'max'...). Minutely data will be used for
-    duration within 1 day, hourly data will be used for duration between 1 day and 90 days, daily data will be used for
-    duration above 90 days.
-    """
+def get_coin_hist_data(x='bitcoin', y='usd', z=91):
     get_time()
     data = cg.get_coin_market_chart_by_id(x, y, z)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
@@ -98,17 +108,11 @@ def get_coin_hist_data(x, y, z):
     df = pd.concat([prices, cap], axis=1)
     df = pd.concat([df, vol], axis=1)
     df = df.set_index('timestamp')
+    df.reset_index(inplace=True)
     return df
 
 
-def get_coin_hist_data_ohlc(x, y, z):
-    """
-    Get coin historical market OHLC.
-    'x' is the ID of the coin, 'y' the symbol of the currency to compare
-    and 'z' being the number of days back from today to get data (ex:1,2,5,'max'...). Minutely data will be used for
-    duration within 1 day, hourly data will be used for duration between 1 day and 90 days, daily data will be used for
-    duration above 90 days.
-    """
+def get_coin_hist_data_ohlc(x='bitcoin', y='usd', z=91):
     get_time()
     df = pd.DataFrame()
     data = cg.get_coin_ohlc_by_id(x, y, z)
@@ -122,13 +126,11 @@ def get_coin_hist_data_ohlc(x, y, z):
             df = df0
         c += 1
     df = df.set_index(['timestamp'])
+    df.reset_index(inplace=True)
     return df
 
 
 def get_trending():
-    """
-    Get trending coins market data.
-    """
     get_time()
     data = cg.get_search_trending()
     df = pd.DataFrame()
@@ -149,13 +151,12 @@ def get_trending():
             print('error')
         c += 1
     df = df.set_index(['id'])
+    # df.reset_index(inplace=True)
     return df
 
 
 def get_defi_mkt():
-    """
-    Get defi market resume.
-    """
     get_time()
     df = pd.DataFrame.from_dict(cg.get_global_decentralized_finance_defi(), orient='index', columns=['Value'])
+    df.reset_index(inplace=True)
     return df
