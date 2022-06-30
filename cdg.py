@@ -1,6 +1,5 @@
 # coding: utf-8
-
-# TODO: Find a way to put the timestamp on all returned dataframes.
+# TODO: Some data visualization functions like 'risk/return' etc...
 # TODO: Make docstring for all functions.
 
 import datetime
@@ -13,6 +12,11 @@ local_time = datetime.datetime.now()
 
 def get_server_status():
     return cg.ping()
+
+
+def get_time():
+    global local_time
+    local_time = datetime.datetime.now()
 
 
 def get_currency_support(name='all'):
@@ -39,9 +43,13 @@ def get_coin_id(name='all'):
                 return f'"{name}" currently not supported.'
 
 
-def get_time():
-    global local_time
-    local_time = datetime.datetime.now()
+def get_resume():
+    get_time()
+    global_data = cg.get_global()
+    df = pd.DataFrame(global_data, columns=['active_cryptocurrencies', 'upcoming_icos',
+                                            'ongoing_icos', 'ended_icos', 'markets'], index=[0])
+    df.index.name = str(local_time.timestamp())
+    return df
 
 
 def get_pub_treasury_data():
@@ -52,19 +60,26 @@ def get_pub_treasury_data():
     eth_pub_treasury = cg.get_companies_public_treasury_by_coin_id('ethereum')
     value_usd.update({'eth': eth_pub_treasury['total_value_usd']})
     value_usd.update({'total': value_usd['btc'] + value_usd['eth']})
-    df = pd.DataFrame(value_usd, index=[str(local_time.timestamp())])
-    df.index.name = 'timestamp'
-    df.reset_index(inplace=True)
+    df = pd.DataFrame(value_usd, index=[0])
+    df.index.name = str(local_time.timestamp())
     return df
 
 
 def get_total_mkt_cap():
     get_time()
     global_data = cg.get_global()
-    total_market_cap = {'usd': global_data['total_market_cap']['usd'], 'btc': global_data['total_market_cap']['btc']}
-    df = pd.DataFrame(total_market_cap, index=[str(local_time.timestamp())])
-    df.index.name = 'timestamp'
-    df.reset_index(inplace=True)
+    total_market_cap = {'usd': global_data['total_market_cap']['usd'], 'btc': global_data['total_market_cap']['btc'],
+                        '%change_24h': global_data["market_cap_change_percentage_24h_usd"]}
+    df = pd.DataFrame(total_market_cap, index=[0])
+    df.index.name = str(local_time.timestamp())
+    return df
+
+
+def get_top10_mkt_cap_coins():
+    get_time()
+    global_data = cg.get_global()
+    df = pd.DataFrame(global_data["market_cap_percentage"], index=[0])
+    df.index.name = str(local_time.timestamp())
     return df
 
 
@@ -73,7 +88,7 @@ def get_mkt_top100():
     data = cg.get_coins_markets(vs_currency='usd', per_page=100)
     df = pd.DataFrame(data, columns=['market_cap_rank', 'id', 'symbol', 'current_price', 'price_change_percentage_24h',
                                      'low_24h', 'high_24h', 'total_volume'])
-    df.reset_index(inplace=True)
+    df.index.name = str(local_time.timestamp())
     return df
 
 
@@ -81,7 +96,7 @@ def get_pair(x='bitcoin', y='usd'):
     get_time()
     data = cg.get_price(x, y, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
-    df.reset_index(inplace=True)
+    df.index.name = str(local_time.timestamp())
     return df
 
 
@@ -95,11 +110,11 @@ def get_coins(*args):
         else:
             df = df0
         c += 1
-    df.reset_index(inplace=True)
+    df.index.name = str(local_time.timestamp())
     return df
 
 
-def get_coin_hist_data(x='bitcoin', y='usd', z=91):
+def get_coin_hist_data(x='bitcoin', y='usd', z=90):
     get_time()
     data = cg.get_coin_market_chart_by_id(x, y, z)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
@@ -107,12 +122,12 @@ def get_coin_hist_data(x='bitcoin', y='usd', z=91):
     vol = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'vol'])
     df = pd.concat([prices, cap], axis=1)
     df = pd.concat([df, vol], axis=1)
-    df = df.set_index('timestamp')
-    df.reset_index(inplace=True)
+    df = df.loc[:, ~df.columns.duplicated()]
     return df
 
 
-def get_coin_hist_data_ohlc(x='bitcoin', y='usd', z=91):
+def get_coin_hist_data_ohlc(x='bitcoin', y='usd', z=90):
+    # Possible values to z = 1/7/14/30/90/180/365/max
     get_time()
     df = pd.DataFrame()
     data = cg.get_coin_ohlc_by_id(x, y, z)
@@ -150,8 +165,8 @@ def get_trending():
         else:
             print('error')
         c += 1
-    df = df.set_index(['id'])
-    # df.reset_index(inplace=True)
+    df.reset_index(inplace=True)
+    df.index.name = str(local_time.timestamp())
     return df
 
 
@@ -159,4 +174,5 @@ def get_defi_mkt():
     get_time()
     df = pd.DataFrame.from_dict(cg.get_global_decentralized_finance_defi(), orient='index', columns=['Value'])
     df.reset_index(inplace=True)
+    df.index.name = str(local_time.timestamp())
     return df
