@@ -118,9 +118,9 @@ def get_mkt_top100():
     return df
 
 
-def get_pair(coin='bitcoin', timeframe='usd'):
+def get_pair(coin='bitcoin', currency='usd'):
     update_time()
-    data = cg.get_price(coin, timeframe, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
+    data = cg.get_price(coin, currency, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
     df.index.name = time
     if df.empty:
@@ -218,16 +218,17 @@ def get_defi_mkt():
 # Analysis functions
 # TODO: Some data analyze functions like 'risk/return' etc...
 
-
-def analyze_port(port=None, bench=None, timeframe=90):
+"""
+def analyze_port(port=None, bench=None, currency='usd', timeframe=90):
     # Possible values to z = 1/7/14/30/90/180/365/max
     if bench is None:
         bench = ['^IXIC', '^DJI', '^GSPC']
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
-    get_time()
-    for ticker in port:
-        pass
+    update_time()
+    for coin in port:
+        coin_ohlc = get_coin_hist_data_ohlc(coin, currency, timeframe)
+"""
 
 
 # Plotting functions
