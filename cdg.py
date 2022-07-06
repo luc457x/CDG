@@ -11,7 +11,7 @@ from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
 
 
-files_path = 'cdg_files'
+files_path = 'cdg_output'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
 cg = CoinGeckoAPI()
@@ -118,9 +118,9 @@ def get_mkt_top100():
     return df
 
 
-def get_pair(x='bitcoin', y='usd'):
+def get_pair(coin='bitcoin', timeframe='usd'):
     update_time()
-    data = cg.get_price(x, y, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
+    data = cg.get_price(coin, timeframe, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
     df.index.name = time
     if df.empty:
@@ -149,8 +149,8 @@ def get_coins(*args):
     return df
 
 
-def get_coin_hist_data(x='bitcoin', y='usd', z=90):
-    data = cg.get_coin_market_chart_by_id(x, y, z)
+def get_coin_hist_data(coin='bitcoin', currency='usd', timeframe=90):
+    data = cg.get_coin_market_chart_by_id(coin, currency, timeframe)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
     vol = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'vol'])
@@ -163,14 +163,14 @@ def get_coin_hist_data(x='bitcoin', y='usd', z=90):
     return df
 
 
-def get_coin_hist_data_ohlc(x='bitcoin', y='usd', z=90):
+def get_coin_hist_data_ohlc(coin='bitcoin', currency='usd', timeframe=90):
     # Possible values to z = 1/7/14/30/90/180/365/max
     update_time()
     df = pd.DataFrame()
-    data = cg.get_coin_ohlc_by_id(x, y, z)
+    data = cg.get_coin_ohlc_by_id(coin, currency, timeframe)
     c = 0
-    for x in data:
-        ohlc = {'timestamp': [x[0]], 'opn': [x[1]], 'high': [x[2]], 'low': [x[3]], 'close': [x[4]]}
+    for coin in data:
+        ohlc = {'timestamp': [coin[0]], 'opn': [coin[1]], 'high': [coin[2]], 'low': [coin[3]], 'close': [coin[4]]}
         df0 = pd.DataFrame.from_dict(ohlc, orient='columns')
         if c > 0:
             df = pd.concat([df, df0], axis=0)
@@ -217,6 +217,18 @@ def get_defi_mkt():
 
 # Analysis functions
 # TODO: Some data analyze functions like 'risk/return' etc...
+
+
+def analyze_port(port=None, bench=None, timeframe=90):
+    # Possible values to z = 1/7/14/30/90/180/365/max
+    if bench is None:
+        bench = ['^IXIC', '^DJI', '^GSPC']
+    if port is None:
+        port = ['bitcoin', 'ethereum', 'binancecoin']
+    get_time()
+    for ticker in port:
+        pass
+
 
 # Plotting functions
 # TODO: Some functions to automate plotting analyzes...
