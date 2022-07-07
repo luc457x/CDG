@@ -1,5 +1,6 @@
 # coding: utf-8
 # TODO: Make docstring for all functions.
+# TODO: cg.get_coin_market_chart_range_by_id()
 
 import datetime
 import numpy as np
@@ -7,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from dateutil.relativedelta import relativedelta
 from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
 
@@ -15,14 +17,16 @@ files_path = 'cdg_output'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
 cg = CoinGeckoAPI()
-time = datetime.datetime.now().timestamp()
+date = datetime.datetime.now().strftime('%Y-%m-%d')
+time = datetime.datetime.now().strftime('%H-%M-%S')
 
 # Basic functions
 
 
 def update_time():
-    global time
-    time = datetime.datetime.now().timestamp()
+    global date, time
+    date = datetime.datetime.now().strftime('%Y-%m-%d')
+    time = datetime.datetime.now().strftime('%H-%M-%S')
 
 
 def save_data(file, exc=False, name='output'):
@@ -74,7 +78,7 @@ def get_resume():
     global_data = cg.get_global()
     df = pd.DataFrame(global_data, columns=['active_cryptocurrencies', 'upcoming_icos',
                                             'ongoing_icos', 'ended_icos', 'markets'], index=[0])
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
@@ -87,7 +91,7 @@ def get_pub_treasury_data():
     value_usd.update({'eth': eth_pub_treasury['total_value_usd']})
     value_usd.update({'total': value_usd['btc'] + value_usd['eth']})
     df = pd.DataFrame(value_usd, index=[0])
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
@@ -97,7 +101,7 @@ def get_total_mkt_cap():
     total_market_cap = {'usd': global_data['total_market_cap']['usd'], 'btc': global_data['total_market_cap']['btc'],
                         '%change_24h': global_data["market_cap_change_percentage_24h_usd"]}
     df = pd.DataFrame(total_market_cap, index=[0])
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
@@ -105,7 +109,7 @@ def get_top10_mkt_cap_coins():
     update_time()
     global_data = cg.get_global()
     df = pd.DataFrame(global_data["market_cap_percentage"], index=[0])
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
@@ -114,7 +118,7 @@ def get_mkt_top100():
     data = cg.get_coins_markets(vs_currency='usd', per_page=100)
     df = pd.DataFrame(data, columns=['market_cap_rank', 'id', 'symbol', 'current_price', 'price_change_percentage_24h',
                                      'low_24h', 'high_24h', 'total_volume'])
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
@@ -122,7 +126,7 @@ def get_pair(coin='bitcoin', currency='usd'):
     update_time()
     data = cg.get_price(coin, currency, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     if df.empty:
         print('Error: DataFrame is empty!')
         return
@@ -142,14 +146,14 @@ def get_coins(*args):
         else:
             df = df0
         c += 1
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     if df.empty:
         print('Error: DataFrame is empty!')
         return
     return df
 
 
-def get_coin_hist_data(coin='bitcoin', currency='usd', timeframe=90):
+def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
     data = cg.get_coin_market_chart_by_id(coin, currency, timeframe)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
@@ -163,8 +167,24 @@ def get_coin_hist_data(coin='bitcoin', currency='usd', timeframe=90):
     return df
 
 
-def get_coin_hist_data_ohlc(coin='bitcoin', currency='usd', timeframe=90):
-    # Possible values to z = 1/7/14/30/90/180/365/max
+def get_coin_hist_by_range(coin='bitcoin', currency='usd',
+                           from_time=(datetime.datetime.now() - relativedelta(months=4)).timestamp(),
+                           to_time=datetime.datetime.now().timestamp()):
+    data = cg.get_coin_market_chart_range_by_id(coin, currency, from_time, to_time)
+    prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
+    cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
+    vol = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'vol'])
+    df = pd.concat([prices, cap], axis=1)
+    df = pd.concat([df, vol], axis=1)
+    df = df.loc[:, ~df.columns.duplicated()]
+    if df.empty:
+        print('Error: DataFrame is empty!')
+        return
+    return df
+
+
+def get_coin_hist_ohlc(coin='bitcoin', currency='usd', timeframe=90):
+    # Possible timeframe values = 1/7/14/30/90/180/365/max
     update_time()
     df = pd.DataFrame()
     data = cg.get_coin_ohlc_by_id(coin, currency, timeframe)
@@ -187,7 +207,7 @@ def get_trending():
     data = cg.get_search_trending()
     df = pd.DataFrame()
     c = 0
-    for _ in data['coins']:
+    for coin in data['coins']:
         df0 = pd.DataFrame(data['coins'][c]['item'], columns=['id', 'symbol', 'market_cap_rank'], index=[0])
         df0['index'] = df0['id']
         df0 = df0.set_index(['index'])
@@ -203,7 +223,7 @@ def get_trending():
             return
         c += 1
     df.reset_index(inplace=True)
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
@@ -211,15 +231,15 @@ def get_defi_mkt():
     update_time()
     df = pd.DataFrame.from_dict(cg.get_global_decentralized_finance_defi(), orient='index', columns=['Value'])
     df.reset_index(inplace=True)
-    df.index.name = time
+    df.index.name = f'{date}_{time}'
     return df
 
 
 # Analysis functions
 # TODO: Some data analyze functions like 'risk/return' etc...
 
-"""
-def analyze_port(port=None, bench=None, currency='usd', timeframe=90):
+
+def analyze_port(port=None, bench=None, currency='usd', timeframe='180'):
     # Possible values to z = 1/7/14/30/90/180/365/max
     if bench is None:
         bench = ['^IXIC', '^DJI', '^GSPC']
@@ -227,8 +247,8 @@ def analyze_port(port=None, bench=None, currency='usd', timeframe=90):
         port = ['bitcoin', 'ethereum', 'binancecoin']
     update_time()
     for coin in port:
-        coin_ohlc = get_coin_hist_data_ohlc(coin, currency, timeframe)
-"""
+        # = get_coin_hist_data_ohlc(coin, currency, timeframe)
+        pass
 
 
 # Plotting functions
