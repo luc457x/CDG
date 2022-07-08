@@ -1,6 +1,5 @@
 # coding: utf-8
-# TODO: Make docstring for all functions.
-# TODO: cg.get_coin_market_chart_range_by_id()
+# ToDo: Make docstring for all functions.
 
 import datetime
 import numpy as np
@@ -9,6 +8,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from dateutil.relativedelta import relativedelta
+from pandas import DataFrame
 from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
 
@@ -167,9 +167,11 @@ def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
     return df
 
 
-def get_coin_hist_by_range(coin='bitcoin', currency='usd',
-                           from_time=(datetime.datetime.now() - relativedelta(months=4)).timestamp(),
-                           to_time=datetime.datetime.now().timestamp()):
+def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_time=None):
+    if from_time is None:
+        from_time = (datetime.datetime.now() - relativedelta(months=4)).timestamp()
+    if to_time is None:
+        to_time = datetime.datetime.now().timestamp()
     data = cg.get_coin_market_chart_range_by_id(coin, currency, from_time, to_time)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
@@ -207,7 +209,7 @@ def get_trending():
     data = cg.get_search_trending()
     df = pd.DataFrame()
     c = 0
-    for coin in data['coins']:
+    for _ in data['coins']:
         df0 = pd.DataFrame(data['coins'][c]['item'], columns=['id', 'symbol', 'market_cap_rank'], index=[0])
         df0['index'] = df0['id']
         df0 = df0.set_index(['index'])
@@ -236,20 +238,26 @@ def get_defi_mkt():
 
 
 # Analysis functions
-# TODO: Some data analyze functions like 'risk/return' etc...
+# ToDo: Some data analyze functions like 'risk/return' etc...
 
 
-def analyze_port(port=None, bench=None, currency='usd', timeframe='180'):
+def analyze_port(port=None, currency='usd', from_time=None, to_time=None):
+    # ToDo: Cache results of this function to reuse for plotting
     # Possible values to z = 1/7/14/30/90/180/365/max
-    if bench is None:
-        bench = ['^IXIC', '^DJI', '^GSPC']
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
     update_time()
+    data = {}
     for coin in port:
-        # = get_coin_hist_data_ohlc(coin, currency, timeframe)
-        pass
+        data[coin] = get_coin_hist_by_range(coin, currency, from_time, to_time)['price']
+    df = pd.DataFrame.from_dict(data)
+    smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
+    avg_return = round((smp_return.mean() * 365), 2)
+    log_return = np.log(df / df.shift(1))
+    smp_return_normal = round((df / df.iloc[0]) * 100, 2)
+    df = pd.DataFrame([smp_return, avg_return, smp_return_normal, log_return])  # FixMe
+    return df
 
 
 # Plotting functions
-# TODO: Some functions to automate plotting analyzes...
+# ToDo: Some functions to automate plotting analyzes...
