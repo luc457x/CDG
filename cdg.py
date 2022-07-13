@@ -20,6 +20,7 @@ cg = CoinGeckoAPI()
 date = datetime.datetime.now().strftime('%Y-%m-%d')
 time = datetime.datetime.now().strftime('%H-%M-%S')
 smp_return = log_return = smp_return_normal = avg_return_annualized = volatility = pd.DataFrame()
+b_smp_return = b_log_return = b_smp_return_normal = b_avg_return_annualized = b_volatility = pd.DataFrame()
 
 
 # Basic functions
@@ -245,6 +246,7 @@ def get_defi_mkt():
 def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     # Possible values to z = 1/7/14/30/90/180/365/max
     global smp_return, log_return, smp_return_normal, avg_return_annualized, volatility
+    global b_smp_return, b_log_return, b_smp_return_normal, b_avg_return_annualized, b_volatility
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
     update_time()
@@ -252,7 +254,14 @@ def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=
     print('Analysing coins...')
     for coin in port:
         data[coin] = get_coin_hist_by_range(coin, currency, from_time, to_time)['price']
+    df = pd.DataFrame.from_dict(data)
+    smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
+    log_return = np.log(df / df.shift(1))
+    smp_return_normal = round((df / df.iloc[0]) * 100, 2)
+    avg_return_annualized = round((smp_return.mean() * 365), 2)
+    volatility = log_return.std() * 365 ** 0.5
     if bench is True:
+        print('Getting benchmark data...')
         bench_data = {}
         if from_time is None:
             from_time = (datetime.datetime.now() - relativedelta(months=4)).timestamp()
@@ -263,15 +272,12 @@ def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
                                                start=datetime.datetime.fromtimestamp(from_time),
                                                end=datetime.datetime.fromtimestamp(to_time))['Adj Close']
-        df_bench = pd.DataFrame.from_dict(bench_data)
-        # ToDo: Find a way to concat or merge 'df_bench' with 'df' considering the date-time.
-    else:
-        df = pd.DataFrame.from_dict(data)
-    smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
-    log_return = np.log(df / df.shift(1))
-    smp_return_normal = round((df / df.iloc[0]) * 100, 2)
-    avg_return_annualized = round((smp_return.mean() * 365), 2)
-    volatility = log_return.std() * 365 ** 0.5
+        b_df = pd.DataFrame.from_dict(bench_data)
+        b_smp_return = round(((b_df / b_df.shift(1)) - 1) * 100, 2)
+        b_log_return = np.log(b_df / b_df.shift(1))
+        b_smp_return_normal = round((b_df / b_df.iloc[0]) * 100, 2)
+        b_avg_return_annualized = round((b_smp_return.mean() * 250), 2)
+        b_volatility = b_log_return.std() * 250 ** 0.5
     print('Analysis finished!')
 
 # Plotting functions
