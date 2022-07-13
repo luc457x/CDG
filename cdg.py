@@ -244,6 +244,7 @@ def get_defi_mkt():
 
 
 def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
+    # ToDo: refactor to save "port" and "bench" in the same DF and add "weights" variable.
     # Possible values to z = 1/7/14/30/90/180/365/max
     global smp_return, log_return, smp_return_normal, avg_return_annualized, volatility
     global b_smp_return, b_log_return, b_smp_return_normal, b_avg_return_annualized, b_volatility
@@ -279,6 +280,7 @@ def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=
         b_avg_return_annualized = round((b_smp_return.mean() * 250), 2)
         b_volatility = b_log_return.std() * 250 ** 0.5
     print('Analysis finished!')
+
 
 # Plotting functions
 
