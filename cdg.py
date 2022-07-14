@@ -1,6 +1,7 @@
 # coding: utf-8
 # ToDo: Make docstring for all functions.
 
+import os
 import datetime
 import numpy as np
 import pandas as pd
@@ -13,14 +14,14 @@ from pandas_datareader import data as wb
 
 # Setup
 
+os.environ['TZ'] = 'Etc/UTC'
 files_path = 'cdg_files'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
 cg = CoinGeckoAPI()
 date = datetime.datetime.now().strftime('%Y-%m-%d')
 time = datetime.datetime.now().strftime('%H-%M-%S')
-smp_return = log_return = smp_return_normal = avg_return_annualized = volatility = pd.DataFrame()
-b_smp_return = b_log_return = b_smp_return_normal = b_avg_return_annualized = b_volatility = pd.DataFrame()
+smp_return = log_return = perform_normal = avg_return_annual = volatility = pd.DataFrame()
 
 
 def update_time():
@@ -237,23 +238,25 @@ def get_defi_mkt():
     return df
 
 
-def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
-    # ToDo: refactor to save "port" and "bench" in the same DF and add "weights" variable.
-    # Possible values to z = 1/7/14/30/90/180/365/max
-    global smp_return, log_return, smp_return_normal, avg_return_annualized, volatility
-    global b_smp_return, b_log_return, b_smp_return_normal, b_avg_return_annualized, b_volatility
+def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
+    # 'from_time' and 'to_time' need to be timestamp.
+    global smp_return, log_return, perform_normal, avg_return_annual, volatility
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
     update_time()
     data = {}
     print('Analysing coins...')
     for coin in port:
-        data[coin] = get_coin_hist_by_range(coin, currency, from_time, to_time)['price']
+        value = get_coin_hist_by_range(coin, currency, from_time, to_time).iloc[:, :2]
+        price = pd.Series(value.iloc[:, 1])
+        index = pd.to_datetime(value.iloc[:, 0], unit='ms')
+        price.index = index
+        data[coin] = price
     df = pd.DataFrame.from_dict(data)
     smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
     log_return = np.log(df / df.shift(1))
-    smp_return_normal = round((df / df.iloc[0]) * 100, 2)
-    avg_return_annualized = round((smp_return.mean() * 365), 2)
+    perform_normal = round((df / df.iloc[0]) * 100, 2)
+    avg_return_annual = round((smp_return.mean() * 365), 2)
     volatility = log_return.std() * 365 ** 0.5
     if bench is True:
         print('Getting benchmark data...')
@@ -267,19 +270,29 @@ def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
                                                start=datetime.datetime.fromtimestamp(from_time),
                                                end=datetime.datetime.fromtimestamp(to_time))['Adj Close']
-            print(bench_data)
-        b_df = pd.DataFrame.from_dict(bench_data)
-        b_smp_return = round(((b_df / b_df.shift(1)) - 1) * 100, 2)
-        b_log_return = np.log(b_df / b_df.shift(1))
-        b_smp_return_normal = round((b_df / b_df.iloc[0]) * 100, 2)
-        b_avg_return_annualized = round((b_smp_return.mean() * 250), 2)
+        df = pd.DataFrame.from_dict(bench_data)
+        b_smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
+        smp_return = pd.concat([smp_return, b_smp_return], axis=1).dropna(axis=1, how='all')
+        b_log_return = np.log(df / df.shift(1))
+        log_return = pd.concat([log_return, b_log_return], axis=1)
+        b_perform_normal = round((df / df.iloc[0]) * 100, 2)
+        perform_normal = pd.concat([perform_normal, b_perform_normal], axis=1)
+        b_avg_return_annual = round((b_smp_return.mean() * 250), 2)
+        avg_return_annual = pd.concat([avg_return_annual, b_avg_return_annual])
         b_volatility = b_log_return.std() * 250 ** 0.5
+        volatility = pd.concat([volatility, b_volatility])
+    smp_return.dropna(how='all', inplace=True)
+    smp_return.fillna(0, inplace=True)
+    log_return.dropna(how='all', inplace=True)
+    log_return.fillna(0, inplace=True)
+    perform_normal.dropna(how='all', inplace=True)
+    perform_normal.ffill(inplace=True)
     print('Analysis finished!')
 
 
-def plot_smp_return():
-    smp_return.plot(figsize=(18, 6), rot=0)
+def plot_smp_return(x=18, y=6):
+    smp_return.plot(figsize=(x, y), rot=0)
     plt.ylabel('in %')
     plt.title('Simple return')
-    plt.savefig()
+    plt.savefig(f'{files_path}/plot_smp_return_{date}_{time}.png')
     plt.close()
