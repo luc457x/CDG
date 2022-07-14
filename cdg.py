@@ -23,9 +23,6 @@ smp_return = log_return = smp_return_normal = avg_return_annualized = volatility
 b_smp_return = b_log_return = b_smp_return_normal = b_avg_return_annualized = b_volatility = pd.DataFrame()
 
 
-# Basic functions
-
-
 def update_time():
     global date, time
     date = datetime.datetime.now().strftime('%Y-%m-%d')
@@ -240,9 +237,6 @@ def get_defi_mkt():
     return df
 
 
-# Analysis function
-
-
 def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     # ToDo: refactor to save "port" and "bench" in the same DF and add "weights" variable.
     # Possible values to z = 1/7/14/30/90/180/365/max
@@ -273,6 +267,7 @@ def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
                                                start=datetime.datetime.fromtimestamp(from_time),
                                                end=datetime.datetime.fromtimestamp(to_time))['Adj Close']
+            print(bench_data)
         b_df = pd.DataFrame.from_dict(bench_data)
         b_smp_return = round(((b_df / b_df.shift(1)) - 1) * 100, 2)
         b_log_return = np.log(b_df / b_df.shift(1))
@@ -282,6 +277,9 @@ def analyze_port(port=None, currency='usd', from_time=None, to_time=None, bench=
     print('Analysis finished!')
 
 
-# Plotting functions
-
-# ToDo: Some functions to automate plotting analyzes...
+def plot_smp_return():
+    smp_return.plot(figsize=(18, 6), rot=0)
+    plt.ylabel('in %')
+    plt.title('Simple return')
+    plt.savefig()
+    plt.close()
