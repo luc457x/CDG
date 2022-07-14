@@ -22,6 +22,7 @@ cg = CoinGeckoAPI()
 date = datetime.datetime.now().strftime('%Y-%m-%d')
 time = datetime.datetime.now().strftime('%H-%M-%S')
 smp_return = log_return = perform_normal = avg_return_annual = volatility = pd.DataFrame()
+sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
 
 
 def update_time():
@@ -239,7 +240,7 @@ def get_defi_mkt():
 
 
 def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
-    # FixMe: Default time frame getting df with weird values on first row.
+    # FixMe: Sometimes getting coins and benchmarks starting in different days.
     # 'from_time' and 'to_time' need to be timestamp.
     global smp_return, log_return, perform_normal, avg_return_annual, volatility
     if port is None:
@@ -291,9 +292,20 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
     print('Analysis finished!')
 
 
+def plot_set_theme(theme='dark'):
+    if theme == 'dark':
+        sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
+    elif theme == 'light':
+        sns.set_theme(context='talk', style='darkgrid', palette='deep', font='dejavu serif')
+    elif theme == 'colorblind':
+        sns.set_theme(context='talk', style='darkgrid', palette='colorblind', font='dejavu serif')
+
 def plot_smp_return(x=18, y=6):
-    smp_return.plot(figsize=(x, y), rot=0)
-    plt.ylabel('in %')
-    plt.title('Simple return')
+    plt.figure(figsize=(x, y))
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    plot = sns.lineplot(data=perform_normal, dashes=False)
+    plot.set(title='Performance')
+    plt.legend(fontsize='14')
+    plot.yaxis.set_major_formatter('{x:1.0f}%')
     plt.savefig(f'{files_path}/plot_smp_return_{date}_{time}.png')
     plt.close()
