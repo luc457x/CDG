@@ -172,7 +172,7 @@ def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_ti
     if from_time is None:
         from_time = (datetime.datetime.now() - relativedelta(months=4)).timestamp()
     if to_time is None:
-        to_time = datetime.datetime.now().timestamp()
+        to_time = (datetime.datetime.now() - relativedelta(days=1)).timestamp()
     data = cg.get_coin_market_chart_range_by_id(coin, currency, from_time, to_time)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
@@ -239,6 +239,7 @@ def get_defi_mkt():
 
 
 def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
+    # FixMe: Default time frame getting df with weird values on first row.
     # 'from_time' and 'to_time' need to be timestamp.
     global smp_return, log_return, perform_normal, avg_return_annual, volatility
     if port is None:
@@ -271,6 +272,7 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
                                                start=datetime.datetime.fromtimestamp(from_time),
                                                end=datetime.datetime.fromtimestamp(to_time))['Adj Close']
         df = pd.DataFrame.from_dict(bench_data)
+        df.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
         b_smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
         smp_return = pd.concat([smp_return, b_smp_return], axis=1).dropna(axis=1, how='all')
         b_log_return = np.log(df / df.shift(1))
@@ -285,7 +287,6 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
     smp_return.fillna(0, inplace=True)
     log_return.dropna(how='all', inplace=True)
     log_return.fillna(0, inplace=True)
-    perform_normal.dropna(how='all', inplace=True)
     perform_normal.ffill(inplace=True)
     print('Analysis finished!')
 
