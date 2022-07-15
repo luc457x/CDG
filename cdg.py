@@ -1,7 +1,6 @@
 # coding: utf-8
 # ToDo: Make docstring for all functions.
 
-import os
 import datetime
 import numpy as np
 import pandas as pd
@@ -14,7 +13,6 @@ from pandas_datareader import data as wb
 
 # Setup
 
-os.environ['TZ'] = 'Etc/UTC'
 files_path = 'cdg_files'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
@@ -264,9 +262,9 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
         print('Getting benchmark data...')
         bench_data = {}
         if from_time is None:
-            from_time = (datetime.datetime.now() - relativedelta(months=4)).timestamp()
+            from_time = (datetime.datetime.utcnow() - relativedelta(months=4)).timestamp()
         if to_time is None:
-            to_time = datetime.datetime.now().timestamp()
+            to_time = datetime.datetime.utcnow().timestamp()
         bench_tickers = ['^DJI', '^GSPC', '^IXIC']
         for ticker in bench_tickers:
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
@@ -300,11 +298,13 @@ def plot_set_theme(theme='dark'):
     elif theme == 'colorblind':
         sns.set_theme(context='talk', style='darkgrid', palette='colorblind', font='dejavu serif')
 
-def plot_smp_return(x=18, y=6):
+
+def plot_lines(df, x=18, y=6):
+    # ToDo
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
-    plot = sns.lineplot(data=perform_normal, dashes=False)
-    plot.set(title='Performance')
+    plot = sns.lineplot(data=df, dashes=False)
+    plot.set(title=title[df])
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
     plt.savefig(f'{files_path}/plot_smp_return_{date}_{time}.png')
