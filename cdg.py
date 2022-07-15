@@ -294,7 +294,8 @@ def plot_set_theme(theme='dark'):
         sns.set_theme(context='talk', style='darkgrid', palette='colorblind', font='dejavu serif')
 
 
-def plot_returns():
+def plot_returns(x=18, y=6):
+    plt.figure(figsize=(x, y))
     # ToDo
     pass
 
@@ -302,7 +303,7 @@ def plot_returns():
 def plot_performance(x=18, y=6):
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
-    plot = sns.lineplot(data=df, dashes=False)
+    plot = sns.lineplot(data=perform_normal, dashes=False)
     plot.set(title='Performance')
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
