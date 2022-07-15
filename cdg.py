@@ -238,7 +238,6 @@ def get_defi_mkt():
 
 
 def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
-    # FixMe: Sometimes getting coins and benchmarks starting in different days.
     # 'from_time' and 'to_time' need to be timestamp.
     global smp_return, log_return, perform_normal, avg_return_annual, volatility
     if port is None:
@@ -261,15 +260,11 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
     if bench is True:
         print('Getting benchmark data...')
         bench_data = {}
-        if from_time is None:
-            from_time = (datetime.datetime.utcnow() - relativedelta(months=4)).timestamp()
-        if to_time is None:
-            to_time = datetime.datetime.utcnow().timestamp()
         bench_tickers = ['^DJI', '^GSPC', '^IXIC']
         for ticker in bench_tickers:
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
-                                               start=datetime.datetime.fromtimestamp(from_time),
-                                               end=datetime.datetime.fromtimestamp(to_time))['Adj Close']
+                                               start=str(df.index[0]),
+                                               end=str(df.index[-1]))['Adj Close']
         df = pd.DataFrame.from_dict(bench_data)
         df.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
         b_smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
@@ -299,13 +294,17 @@ def plot_set_theme(theme='dark'):
         sns.set_theme(context='talk', style='darkgrid', palette='colorblind', font='dejavu serif')
 
 
-def plot_lines(df, x=18, y=6):
+def plot_returns():
     # ToDo
+    pass
+
+
+def plot_performance(x=18, y=6):
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
     plot = sns.lineplot(data=df, dashes=False)
-    plot.set(title=title[df])
+    plot.set(title='Performance')
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
-    plt.savefig(f'{files_path}/plot_smp_return_{date}_{time}.png')
+    plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
     plt.close()
