@@ -294,7 +294,8 @@ def plot_set_theme(theme='dark'):
         sns.set_theme(context='talk', style='darkgrid', palette='colorblind', font='dejavu serif')
 
 
-def plot_returns():
+def plot_returns(x=18, y=6):
+    plt.figure(figsize=(x, y))
     # ToDo
     pass
 
