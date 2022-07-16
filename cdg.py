@@ -238,7 +238,8 @@ def get_defi_mkt():
 
 
 def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
-    # 'from_time' and 'to_time' need to be timestamp.
+    # FixMe: Calculation of returns returning weird values like less than -100%
+    # 'from_time' and 'to_time' need to be a timestamp.
     global smp_return, log_return, perform_normal, avg_return_annual, volatility
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
@@ -252,7 +253,7 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
         price.index = index
         data[coin] = price
     df = pd.DataFrame.from_dict(data)
-    smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
+    smp_return = ((df / df.shift(1)) - 1)
     log_return = np.log(df / df.shift(1))
     perform_normal = round((df / df.iloc[0]) * 100, 2)
     avg_return_annual = round((smp_return.mean() * 365), 2)
@@ -267,7 +268,7 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
                                                end=str(df.index[-1]))['Adj Close']
         df = pd.DataFrame.from_dict(bench_data)
         df.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
-        b_smp_return = round(((df / df.shift(1)) - 1) * 100, 2)
+        b_smp_return = ((df / df.shift(1)) - 1)
         smp_return = pd.concat([smp_return, b_smp_return], axis=1).dropna(axis=1, how='all')
         b_log_return = np.log(df / df.shift(1))
         log_return = pd.concat([log_return, b_log_return], axis=1)
@@ -296,8 +297,13 @@ def plot_set_theme(theme='dark'):
 
 def plot_returns(x=18, y=6):
     plt.figure(figsize=(x, y))
-    # ToDo
-    pass
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    plot = sns.lineplot(data=perform_normal, dashes=False)
+    plot.set(title='Return')
+    plt.legend(fontsize='14')
+    plot.yaxis.set_major_formatter('{x:1.0f}%')
+    plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
+    plt.close()
 
 
 def plot_performance(x=18, y=6):
