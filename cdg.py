@@ -1,5 +1,5 @@
 # coding: utf-8
-# ToDo: Implement caching
+# ToDo: Implement caching for coingecko API
 # ToDo: Make docstring for all functions.
 
 import datetime
@@ -17,8 +17,6 @@ from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 # Setup
 
 expire_cache = datetime.timedelta(days=3)
-session = requests_cache.CachedSession(cache_name='cache', backend='sqlite', expire_after=expire_cache)
-session.headers = DEFAULT_HEADERS
 files_path = 'cdg_files'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
@@ -260,6 +258,8 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
     df = pd.DataFrame.from_dict(data)
     if bench is True:
         print('Getting benchmark data...')
+        session = requests_cache.CachedSession(cache_name='ycache', backend='sqlite', expire_after=expire_cache)
+        session.headers = DEFAULT_HEADERS
         bench_data = {}
         bench_tickers = ['^DJI', '^GSPC', '^IXIC']
         for ticker in bench_tickers:
