@@ -19,7 +19,7 @@ path.mkdir(exist_ok=True)
 cg = CoinGeckoAPI()
 date = datetime.datetime.now().strftime('%Y-%m-%d')
 time = datetime.datetime.now().strftime('%H-%M-%S')
-smp_return = log_return = perform_normal = avg_return_annual = volatility = pd.DataFrame()
+analyzed_port = {}
 sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
 
 
@@ -238,9 +238,8 @@ def get_defi_mkt():
 
 
 def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
-    # FixMe: Calculation of returns returning weird values like less than -100%
     # 'from_time' and 'to_time' need to be a timestamp.
-    global smp_return, log_return, perform_normal, avg_return_annual, volatility
+    global analyzed_port
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
     update_time()
@@ -253,11 +252,6 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
         price.index = index
         data[coin] = price
     df = pd.DataFrame.from_dict(data)
-    smp_return = ((df / df.shift(1)) - 1)
-    log_return = np.log(df / df.shift(1))
-    perform_normal = round((df / df.iloc[0]) * 100, 2)
-    avg_return_annual = round((smp_return.mean() * 365), 2)
-    volatility = log_return.std() * 365 ** 0.5
     if bench is True:
         print('Getting benchmark data...')
         bench_data = {}
@@ -266,50 +260,58 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
                                                start=str(df.index[0]),
                                                end=str(df.index[-1]))['Adj Close']
-        df = pd.DataFrame.from_dict(bench_data)
-        df.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
-        b_smp_return = ((df / df.shift(1)) - 1)
-        smp_return = pd.concat([smp_return, b_smp_return], axis=1).dropna(axis=1, how='all')
-        b_log_return = np.log(df / df.shift(1))
-        log_return = pd.concat([log_return, b_log_return], axis=1)
-        b_perform_normal = round((df / df.iloc[0]) * 100, 2)
-        perform_normal = pd.concat([perform_normal, b_perform_normal], axis=1)
-        b_avg_return_annual = round((b_smp_return.mean() * 250), 2)
-        avg_return_annual = pd.concat([avg_return_annual, b_avg_return_annual])
-        b_volatility = b_log_return.std() * 250 ** 0.5
-        volatility = pd.concat([volatility, b_volatility])
+        bench = pd.DataFrame.from_dict(bench_data)
+        bench.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
+        df = pd.concat([df, bench], axis=1)
+        df.ffill(inplace=True)
+        df.bfill(inplace=True)
+    smp_return = ((df / df.shift(1)) - 1) * 100
+    log_return = np.log(df / df.shift(1)) * 100
+    cum_return = ((df.iloc[-1] - df.iloc[0]) / df.iloc[0]) * 100
+    perform_normal = round((df / df.iloc[0]) * 100, 2)
+    volatility = log_return.std() * 100
+    analyzed_port["prices"] = df
     smp_return.dropna(how='all', inplace=True)
     smp_return.fillna(0, inplace=True)
+    analyzed_port['smp_return'] = smp_return
     log_return.dropna(how='all', inplace=True)
     log_return.fillna(0, inplace=True)
+    analyzed_port['log_return'] = log_return
+    analyzed_port["cum_return"] = cum_return
     perform_normal.ffill(inplace=True)
+    analyzed_port["perform_normal"] = perform_normal
+    analyzed_port["volatility"] = volatility
     print('Analysis finished!')
 
 
 def plot_set_theme(theme='dark'):
     if theme == 'dark':
-        sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
+        sns.set_theme(palette='dark')
     elif theme == 'light':
-        sns.set_theme(context='talk', style='darkgrid', palette='deep', font='dejavu serif')
+        sns.set_theme(palette='deep')
     elif theme == 'colorblind':
-        sns.set_theme(context='talk', style='darkgrid', palette='colorblind', font='dejavu serif')
+        sns.set_theme(palette='colorblind')
 
 
-def plot_returns(x=18, y=6):
+def plot_returns(x=18, y=6, log=False):
+    if log:
+        returns = "log_return"
+    else:
+        returns = "smp_return"
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
-    plot = sns.lineplot(data=perform_normal, dashes=False)
+    plot = sns.lineplot(data=analyzed_port[returns], dashes=False)
     plot.set(title='Return')
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
-    plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
+    plt.savefig(f'{files_path}/plot_return_{date}_{time}.png')
     plt.close()
 
 
 def plot_performance(x=18, y=6):
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
-    plot = sns.lineplot(data=perform_normal, dashes=False)
+    plot = sns.lineplot(data=analyzed_port["perform_normal"], dashes=False)
     plot.set(title='Performance')
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
