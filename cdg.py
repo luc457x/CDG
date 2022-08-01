@@ -1,4 +1,5 @@
 # coding: utf-8
+# ToDo: Implement caching
 # ToDo: Make docstring for all functions.
 
 import datetime
@@ -269,7 +270,7 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
     log_return = np.log(df / df.shift(1)) * 100
     cum_return = ((df.iloc[-1] - df.iloc[0]) / df.iloc[0]) * 100
     perform_normal = round((df / df.iloc[0]) * 100, 2)
-    volatility = log_return.std() * 100
+    volatility = log_return.std()
     analyzed_port["prices"] = df
     smp_return.dropna(how='all', inplace=True)
     smp_return.fillna(0, inplace=True)
@@ -316,4 +317,19 @@ def plot_performance(x=18, y=6):
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
     plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
+    plt.close()
+
+
+def plot_risk_return(x=18, y=6):
+    plt.figure(figsize=(x, y))
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    df = pd.concat([analyzed_port["volatility"], round(analyzed_port['log_return'].mean() * 100, 2)], axis=1)
+    df.reset_index(inplace=True)
+    df.columns = ['index', 'Risk', 'Return']
+    print(df)
+    print(df.info())
+    plot = sns.scatterplot(data=df, x='Risk', y='Return', hue='index')
+    plot.set(title='Risk/Return')
+    plt.legend(fontsize='14')
+    plt.savefig(f'{files_path}/risk&return_{date}_{time}.png')
     plt.close()
