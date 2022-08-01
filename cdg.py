@@ -3,6 +3,7 @@
 # ToDo: Make docstring for all functions.
 
 import datetime
+import requests_cache
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,9 +12,13 @@ from pathlib import Path
 from dateutil.relativedelta import relativedelta
 from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
+from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 
 # Setup
 
+expire_cache = datetime.timedelta(days=3)
+session = requests_cache.CachedSession(cache_name='cache', backend='sqlite', expire_after=expire_cache)
+session.headers = DEFAULT_HEADERS
 files_path = 'cdg_files'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
@@ -260,7 +265,7 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
         for ticker in bench_tickers:
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
                                                start=str(df.index[0]),
-                                               end=str(df.index[-1]))['Adj Close']
+                                               end=str(df.index[-1]), session=session)['Adj Close']
         bench = pd.DataFrame.from_dict(bench_data)
         bench.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
         df = pd.concat([df, bench], axis=1)
@@ -326,8 +331,6 @@ def plot_risk_return(x=18, y=6):
     df = pd.concat([analyzed_port["volatility"], round(analyzed_port['log_return'].mean() * 100, 2)], axis=1)
     df.reset_index(inplace=True)
     df.columns = ['index', 'Risk', 'Return']
-    print(df)
-    print(df.info())
     plot = sns.scatterplot(data=df, x='Risk', y='Return', hue='index')
     plot.set(title='Risk/Return')
     plt.legend(fontsize='14')
