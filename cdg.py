@@ -1,6 +1,7 @@
 # coding: utf-8
 # ToDo: Implement caching for coingecko API
 # ToDo: Make docstring for all functions.
+# ToDo: Change usage of pandas to numpy when data need to be calculated but not showed.
 
 import datetime
 import requests_cache
@@ -162,8 +163,7 @@ def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
     vol = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'vol'])
-    df = pd.concat([prices, cap], axis=1)
-    df = pd.concat([df, vol], axis=1)
+    df = pd.concat([prices, cap, vol], axis=1)
     df = df.loc[:, ~df.columns.duplicated()]
     if df.empty:
         print('Error: DataFrame is empty!')
@@ -180,8 +180,7 @@ def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_ti
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
     vol = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'vol'])
-    df = pd.concat([prices, cap], axis=1)
-    df = pd.concat([df, vol], axis=1)
+    df = pd.concat([prices, cap, vol], axis=1)
     df = df.loc[:, ~df.columns.duplicated()]
     if df.empty:
         print('Error: DataFrame is empty!')
