@@ -1,6 +1,5 @@
 # coding: utf-8
 # ToDo: Implement caching for coingecko API
-# ToDo: Make docstring for all functions.
 # ToDo: Change usage of pandas to numpy when data need to be calculated but not showed.
 
 import datetime
@@ -29,31 +28,55 @@ sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu ser
 
 
 def update_time():
+    """
+    Update date and time values.
+
+    :return:
+    """
     global date, time
     date = datetime.datetime.now().strftime('%Y-%m-%d')
     time = datetime.datetime.now().strftime('%H-%M-%S')
 
 
-def save_data(file, exc=False, name='output'):
-    print(file)
+def save_data(file, csv=True, name='output'):
+    """
+    Save DataFrame to csv or xlsx file.
+
+    :param file: DataFrame
+    :param csv: Bool
+    :param name: str
+    :return:
+    """
+    update_time()
     if type(file) == pd.DataFrame:
         df = file
     else:
         print('Error: file is not a DataFrame!')
         return
-    if not exc:
-        df.to_csv(f'{files_path}/{name}.csv')
-    elif exc:
-        df.to_excel(f'{files_path}/{name}.xlsx')
+    if csv:
+        df.to_csv(f'{files_path}/{name}_{date}_{time}.csv')
+    elif not csv:
+        df.to_excel(f'{files_path}/{name}_{date}_{time}.xlsx')
     else:
         print('Error: weird \'exc\' argument value!')
 
 
 def get_server_status():
+    """
+    Ping coingecko API.
+
+    :return: str
+    """
     return cg.ping()
 
 
 def get_currency_support(name='all'):
+    """
+    Get a list of supported currencies or check if specific currency is supported.
+
+    :param name: str
+    :return: dict or boolean
+    """
     currencies = cg.get_supported_vs_currencies()
     if name == 'all':
         return currencies
@@ -66,6 +89,12 @@ def get_currency_support(name='all'):
 
 
 def get_coin_id(name='all'):
+    """
+    Get a list of supported coins or check if specific coin is supported.
+
+    :param name: str
+    :return: str
+    """
     coins = cg.get_coins_list()
     if name == 'all':
         return coins
@@ -79,6 +108,11 @@ def get_coin_id(name='all'):
 
 
 def get_resume():
+    """
+    Get a resume of today's crypto market.
+
+    :return: DataFrame
+    """
     update_time()
     global_data = cg.get_global()
     df = pd.DataFrame(global_data, columns=['active_cryptocurrencies', 'upcoming_icos',
@@ -88,6 +122,11 @@ def get_resume():
 
 
 def get_pub_treasury_data():
+    """
+    Get institutional holdings of BTC and ETH values.
+
+    :return: DataFrame
+    """
     update_time()
     value_usd = {}
     btc_pub_treasury = cg.get_companies_public_treasury_by_coin_id('bitcoin')
@@ -101,6 +140,11 @@ def get_pub_treasury_data():
 
 
 def get_total_mkt_cap():
+    """
+    Get market cap values in USD and BTC, and percentage of change in the last 24H.
+
+    :return: DataFrame
+    """
     update_time()
     global_data = cg.get_global()
     total_market_cap = {'usd': global_data['total_market_cap']['usd'], 'btc': global_data['total_market_cap']['btc'],
@@ -111,6 +155,11 @@ def get_total_mkt_cap():
 
 
 def get_top10_mkt_cap_coins():
+    """
+    Get the top10 coins by market cap.
+
+    :return: DataFrame
+    """
     update_time()
     global_data = cg.get_global()
     df = pd.DataFrame(global_data["market_cap_percentage"], index=[0])
@@ -119,6 +168,11 @@ def get_top10_mkt_cap_coins():
 
 
 def get_mkt_top100():
+    """
+    Get a list of the top100 coins.
+
+    :return: DataFrame
+    """
     update_time()
     data = cg.get_coins_markets(vs_currency='usd', per_page=100)
     df = pd.DataFrame(data, columns=['market_cap_rank', 'id', 'symbol', 'current_price', 'price_change_percentage_24h',
@@ -128,6 +182,13 @@ def get_mkt_top100():
 
 
 def get_pair(coin='bitcoin', currency='usd'):
+    """
+    Get a pair (coin vs currency) market value and volume.
+
+    :param coin: str
+    :param currency: str
+    :return: DataFrame
+    """
     update_time()
     data = cg.get_price(coin, currency, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
@@ -139,6 +200,12 @@ def get_pair(coin='bitcoin', currency='usd'):
 
 
 def get_coins(*args):
+    """
+    Get a list of pairs (coins vs usd) market values and volume.
+
+    :param args: str
+    :return: DataFrame
+    """
     if not args:
         print('Error: missing args!')
         return
@@ -159,6 +226,16 @@ def get_coins(*args):
 
 
 def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
+    """
+    Get coin historical values and volume.
+
+    Auto granularity.
+
+    :param coin: str
+    :param currency: str
+    :param timeframe: int
+    :return: DataFrame
+    """
     data = cg.get_coin_market_chart_by_id(coin, currency, timeframe)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     cap = pd.DataFrame(data['market_caps'], columns=['timestamp', 'mkt_cap'])
@@ -172,6 +249,17 @@ def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
 
 
 def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_time=None):
+    """
+    Get coin historical values and volume in a defined timerange.
+
+    Auto granularity.
+
+    :param coin: str
+    :param currency: str
+    :param from_time: timestamp
+    :param to_time: timestamp
+    :return: DataFrame
+    """
     if from_time is None:
         from_time = (datetime.datetime.now() - relativedelta(months=4)).timestamp()
     if to_time is None:
@@ -189,7 +277,18 @@ def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_ti
 
 
 def get_coin_hist_ohlc(coin='bitcoin', currency='usd', timeframe=90):
-    # Possible timeframe values = 1/7/14/30/90/180/365/max
+    """
+    Get coin historical OHLC.
+
+    Auto granularity.
+
+    Possible timeframe values = 1/7/14/30/90/180/365/"max".
+
+    :param coin: str
+    :param currency: str
+    :param timeframe: int
+    :return: DataFrame
+    """
     update_time()
     df = pd.DataFrame()
     data = cg.get_coin_ohlc_by_id(coin, currency, timeframe)
@@ -208,6 +307,11 @@ def get_coin_hist_ohlc(coin='bitcoin', currency='usd', timeframe=90):
 
 
 def get_trending():
+    """
+    Get a list with the current trending coins.
+
+    :return: DataFrame
+    """
     update_time()
     data = cg.get_search_trending()
     df = pd.DataFrame()
@@ -233,6 +337,11 @@ def get_trending():
 
 
 def get_defi_mkt():
+    """
+    Get a resume about DeFi markets.
+
+    :return: DataFrame
+    """
     update_time()
     df = pd.DataFrame.from_dict(cg.get_global_decentralized_finance_defi(), orient='index', columns=['Value'])
     df.reset_index(inplace=True)
@@ -241,12 +350,21 @@ def get_defi_mkt():
 
 
 def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench=True):
-    # 'from_time' and 'to_time' need to be a timestamp.
+    """
+    Gather data from a list of coins and store it for further analysis and/or plotting.
+
+    :param port: str
+    :param currency: str
+    :param from_time: timestamp
+    :param to_time: timestamp
+    :param bench: boolean
+    :return:
+    """
+    update_time()
+    data = {}
     global analyzed_port
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
-    update_time()
-    data = {}
     print('Analysing coins...')
     for coin in port:
         value = get_coin_hist_by_range(coin, currency, from_time, to_time).iloc[:, :2]
@@ -290,6 +408,12 @@ def analyze_coins(port=None, currency='usd', from_time=None, to_time=None, bench
 
 
 def plot_set_theme(theme='dark'):
+    """
+    Change between plotting preset themes (dark, light or colorblind).
+
+    :param theme: str
+    :return:
+    """
     if theme == 'dark':
         sns.set_theme(palette='dark')
     elif theme == 'light':
@@ -299,6 +423,15 @@ def plot_set_theme(theme='dark'):
 
 
 def plot_returns(x=18, y=6, log=False):
+    """
+    Save line-plot from returns of analysed coins data.
+
+    :param x: int
+    :param y: int
+    :param log: boolean
+    :return:
+    """
+    update_time()
     if log:
         returns = "log_return"
     else:
@@ -314,6 +447,14 @@ def plot_returns(x=18, y=6, log=False):
 
 
 def plot_performance(x=18, y=6):
+    """
+    Save line-plot from performance of analysed coins data.
+
+    :param x: int
+    :param y: int
+    :return:
+    """
+    update_time()
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
     plot = sns.lineplot(data=analyzed_port["perform_normal"], dashes=False)
@@ -325,6 +466,14 @@ def plot_performance(x=18, y=6):
 
 
 def plot_risk_return(x=18, y=6):
+    """
+    Save scatter-plot from risk&return of analysed coins data.
+
+    :param x: int
+    :param y: int
+    :return:
+    """
+    update_time()
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
     df = pd.concat([analyzed_port["volatility"], round(analyzed_port['log_return'].mean() * 100, 2)], axis=1)
