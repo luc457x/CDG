@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(
-    name='CDG setup file',
+    name='Cripto Data Gathering V.ALPHA',
     version='0.0.1',
     scripts=['cdg.py'],
 )
