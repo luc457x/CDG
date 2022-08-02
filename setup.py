@@ -3,5 +3,5 @@ from setuptools import setup
 setup(
     name='cdg',
     version='0.0.1',
-    scripts=['cdg.py'],
+    install_requires="requirements.txt"
 )
