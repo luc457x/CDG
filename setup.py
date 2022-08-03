@@ -1,3 +1,5 @@
+from setuptools import setup, find_packages
+
 setup(
     name='cdg',
     version='0.0.1',
