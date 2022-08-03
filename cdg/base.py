@@ -16,7 +16,7 @@ from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 
 # Setup
 
-expire_cache = datetime.timedelta(days=3)
+expire_cache = datetime.timedelta(hours=11)
 files_path = 'cdg_files'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
@@ -80,7 +80,8 @@ def get_server_status():
 
     :return: str
     """
-    return cg.ping()
+    update_time()
+    return f'{cg.ping()} AT {time} FROM {date}'
 
 
 def get_currency_support(name='all'):
