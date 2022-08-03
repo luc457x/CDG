@@ -27,6 +27,19 @@ analyzed_port = {}
 sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
 
 
+def change_float_precision(val='sn'):
+    """
+    Change how float numbers are represented (default scientific notation or how much numbers after the decimal).
+
+    :param val: str or int
+    :return:
+    """
+    if val == 'sn':
+        pd.reset_option('display.float_format', silent=True)
+    else:
+        pd.set_option('display.float_format', lambda x: str(f'%.{val}f') % x)
+
+
 def update_time():
     """
     Update date and time values.
