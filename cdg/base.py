@@ -423,10 +423,11 @@ def plot_set_theme(theme='dark'):
         sns.set_theme(palette='colorblind')
 
 
-def plot_returns(x=18, y=6, log=False):
+def plot_returns(x=18, y=6, close=True, log=False):
     """
     Save line-plot from returns of analysed coins data.
 
+    :param close: bool
     :param x: int
     :param y: int
     :param log: boolean
@@ -444,13 +445,17 @@ def plot_returns(x=18, y=6, log=False):
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
     plt.savefig(f'{files_path}/plot_return_{date}_{time}.png')
-    plt.close()
+    if close:
+        plt.close()
+    else:
+        return plt
 
 
-def plot_performance(x=18, y=6):
+def plot_performance(x=18, y=6, close=True):
     """
     Save line-plot from performance of analysed coins data.
 
+    :param close: bool
     :param x: int
     :param y: int
     :return:
@@ -463,13 +468,17 @@ def plot_performance(x=18, y=6):
     plt.legend(fontsize='14')
     plot.yaxis.set_major_formatter('{x:1.0f}%')
     plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
-    plt.close()
+    if close:
+        plt.close()
+    else:
+        return plt
 
 
-def plot_risk_return(x=18, y=6):
+def plot_risk_return(x=18, y=6, close=True):
     """
     Save scatter-plot from risk&return of analysed coins data.
 
+    :param close: bool
     :param x: int
     :param y: int
     :return:
@@ -484,4 +493,7 @@ def plot_risk_return(x=18, y=6):
     plot.set(title='Risk/Return')
     plt.legend(fontsize='14')
     plt.savefig(f'{files_path}/risk&return_{date}_{time}.png')
-    plt.close()
+    if close:
+        plt.close()
+    else:
+        return plt
