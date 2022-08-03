@@ -1,9 +1,9 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name='cdg',
     version='0.0.1',
-    packages=find_packages(),
+    scripts=['cdg.py'],
     install_requires=[
         'matplotlib==3.5.2',
         'numpy==1.22.4',
