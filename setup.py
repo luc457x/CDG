@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='cdg',
+    name='test',
     version='0.0.1',
     scripts=['cdg.py'],
     install_requires=[
