@@ -461,8 +461,6 @@ def plot_returns(x=18, y=6, close=True, log=False):
     plt.savefig(f'{files_path}/plot_return_{date}_{time}.png')
     if close:
         plt.close()
-    else:
-        return plt
 
 
 def plot_performance(x=18, y=6, close=True):
@@ -484,8 +482,6 @@ def plot_performance(x=18, y=6, close=True):
     plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
     if close:
         plt.close()
-    else:
-        return plt
 
 
 def plot_risk_return(x=18, y=6, close=True):
@@ -509,5 +505,3 @@ def plot_risk_return(x=18, y=6, close=True):
     plt.savefig(f'{files_path}/risk&return_{date}_{time}.png')
     if close:
         plt.close()
-    else:
-        return plt
