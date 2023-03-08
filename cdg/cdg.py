@@ -3,16 +3,17 @@
 # ToDo: Change usage of pandas to numpy when data need to be calculated but not showed.
 
 import datetime
-import requests_cache
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import requests_cache
 import seaborn as sns
-from pathlib import Path
 from dateutil.relativedelta import relativedelta
-from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
 from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
+from pycoingecko import CoinGeckoAPI
 
 # Setup
 
