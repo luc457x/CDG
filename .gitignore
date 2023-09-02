@@ -6,3 +6,4 @@
 *.txt
 *.csv
 *.sqlite
+*.ipynb_checkpoints/
