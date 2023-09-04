@@ -1,2 +1,6 @@
 __all__ = []
-from . import *
+import cdg
+from .get import *
+from .analyze import *
+from .plot import *
+from .gen import *

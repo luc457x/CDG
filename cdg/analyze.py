@@ -1,8 +1,11 @@
 # coding: utf-8
 
+from cdg.get import *
+
 # Setup
 
 analyzed_port = {}
+expire_cache = datetime.timedelta(hours=11)
 
 def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     """

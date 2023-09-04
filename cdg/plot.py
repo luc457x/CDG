@@ -1,5 +1,7 @@
 # coding: utf-8
 
+import seaborn as sns
+
 sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
 
 def change_float_precision(val='sn'):
