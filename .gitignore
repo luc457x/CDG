@@ -8,4 +8,4 @@
 *.sqlite
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
-
+venv
