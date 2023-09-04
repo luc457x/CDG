@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from pathlib import Path
 from dateutil.relativedelta import relativedelta
 from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
@@ -16,9 +17,14 @@ from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 # Setup
 
 expire_cache = datetime.timedelta(hours=11)
+files_path = 'cdg_files'
+path = Path(files_path)
+path.mkdir(exist_ok=True)
 cg = CoinGeckoAPI()
 date = datetime.datetime.now().strftime('%Y-%m-%d')
 time = datetime.datetime.now().strftime('%H-%M-%S')
+analyzed_port = {}
+sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
 
 
 
