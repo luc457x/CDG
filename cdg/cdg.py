@@ -3,17 +3,16 @@
 # ToDo: Change usage of pandas to numpy when data need to be calculated but not showed.
 
 import datetime
-from pathlib import Path
-
-import matplotlib.pyplot as plt
+import requests_cache
 import numpy as np
 import pandas as pd
-import requests_cache
+import matplotlib.pyplot as plt
 import seaborn as sns
+from pathlib import Path
 from dateutil.relativedelta import relativedelta
+from pycoingecko import CoinGeckoAPI
 from pandas_datareader import data as wb
 from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
-from pycoingecko import CoinGeckoAPI
 
 # Setup
 
@@ -75,7 +74,7 @@ def save_data(file, csv=True, name='output'):
         print('Error: weird \'exc\' argument value!')
 
 
-def get_server_status():
+def server_status():
     """
     Ping coingecko API.
 
