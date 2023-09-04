@@ -1,3 +1,3 @@
 __all__ = []
-from cdg import *
+from cdg.py import *
 from .get import *
