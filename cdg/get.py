@@ -1,32 +1,13 @@
 # coding: utf-8
-# ToDo: Implement caching for coingecko API
 # ToDo: Change usage of pandas to numpy when data need to will be calculated but not plotted.
 
-import datetime
-import requests_cache
+from cdg.main import *
 import numpy as np
-import pandas as pd
-from pathlib import Path
-from dateutil.relativedelta import relativedelta
 from pycoingecko import CoinGeckoAPI
-from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 
 # Setup
 
-"""Prep workspace"""
-files_path = 'cdg_files'
-path = Path(files_path)
-path.mkdir(exist_ok=True)
-cg = CoinGeckoAPI()
-"""Cache"""
-expire_cache = datetime.timedelta(minutes=5)
-session = requests_cache.CachedSession(cache_name=f'{files_path}/ycache', backend='sqlite', expire_after=expire_cache)
-session.headers = DEFAULT_HEADERS
-"""Time"""
-date = datetime.datetime.now().strftime('%Y-%m-%d')
-time = datetime.datetime.now().strftime('%H-%M-%S')
-"""Global variables storing value to be manipulated"""
-analyzed_port = {}
+cg = CoinGeckoAPI
 
 # Funcs
 

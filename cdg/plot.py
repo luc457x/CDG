@@ -1,5 +1,6 @@
 # coding: utf-8
 
+from cdg.main import *
 from cdg.get import *
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -48,7 +49,7 @@ def plot_returns(x=18, y=6, close=True, log=False):
     :param log: boolean
     :return:
     """
-    update_time()
+    get_time()
     if log:
         returns = "log_return"
     else:
@@ -73,7 +74,7 @@ def plot_performance(x=18, y=6, close=True):
     :param y: int
     :return:
     """
-    update_time()
+    get_time()
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
     plot = sns.lineplot(data=analyzed_port["perform_normal"], dashes=False)
@@ -94,7 +95,7 @@ def plot_risk_return(x=18, y=6, close=True):
     :param y: int
     :return:
     """
-    update_time()
+    get_time()
     plt.figure(figsize=(x, y))
     plt.tick_params(axis='both', which='major', labelsize=14)
     df = pd.concat([analyzed_port["volatility"], round(analyzed_port['log_return'].mean() * 100, 2)], axis=1)

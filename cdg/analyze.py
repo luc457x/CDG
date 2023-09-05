@@ -1,5 +1,7 @@
 # coding: utf-8
+# ToDo: Markowitz model analysis, getting portfolio as input and returning ideal portfolio data or difference if a set distribution was inputed
 
+from cdg.main import *
 from cdg.get import *
 from pandas_datareader import data as wb
 
@@ -21,7 +23,7 @@ def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     :param bench: boolean
     :return:
     """
-    update_time()
+    get_time()
     data = {}
     global analyzed_port
     if port is None:
