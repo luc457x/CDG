@@ -1,8 +1,14 @@
 # coding: utf-8
 
+from cdg.get import *
+import matplotlib.pyplot as plt
 import seaborn as sns
 
+# Setup
+
 sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
+
+# Funcs
 
 def change_float_precision(val='sn'):
     """

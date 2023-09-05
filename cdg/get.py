@@ -1,34 +1,36 @@
 # coding: utf-8
 # ToDo: Implement caching for coingecko API
-# ToDo: Change usage of pandas to numpy when data need to be calculated but not showed.
+# ToDo: Change usage of pandas to numpy when data need to will be calculated but not plotted.
 
 import datetime
 import requests_cache
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
 from dateutil.relativedelta import relativedelta
 from pycoingecko import CoinGeckoAPI
-from pandas_datareader import data as wb
 from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 
 # Setup
 
-expire_cache = datetime.timedelta(hours=11)
+"""Prep workspace"""
 files_path = 'cdg_files'
 path = Path(files_path)
 path.mkdir(exist_ok=True)
 cg = CoinGeckoAPI()
+"""Cache"""
+expire_cache = datetime.timedelta(minutes=5)
+session = requests_cache.CachedSession(cache_name=f'{files_path}/ycache', backend='sqlite', expire_after=expire_cache)
+session.headers = DEFAULT_HEADERS
+"""Time"""
 date = datetime.datetime.now().strftime('%Y-%m-%d')
 time = datetime.datetime.now().strftime('%H-%M-%S')
+"""Global variables storing value to be manipulated"""
 analyzed_port = {}
-sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu serif')
 
+# Funcs
 
-
-def update_time():
+def get_time():
     """
     Update date and time values.
 
@@ -38,39 +40,15 @@ def update_time():
     date = datetime.datetime.now().strftime('%Y-%m-%d')
     time = datetime.datetime.now().strftime('%H-%M-%S')
 
-
-def save_data(file, csv=True, name='output'):
-    """
-    Save DataFrame to csv or xlsx file.
-
-    :param file: DataFrame
-    :param csv: Bool
-    :param name: str
-    :return:
-    """
-    update_time()
-    if type(file) == pd.DataFrame:
-        df = file
-    else:
-        print('Error: file is not a DataFrame!')
-        return
-    if csv:
-        df.to_csv(f'{files_path}/{name}_{date}_{time}.csv')
-    elif not csv:
-        df.to_excel(f'{files_path}/{name}_{date}_{time}.xlsx')
-    else:
-        print('Error: weird \'exc\' argument value!')
-
-
 def get_server_status():
     """
     Ping coingecko API.
 
     :return: str
     """
-    update_time()
-    return f'{cg.ping()} AT {time} FROM {date}'
-
+    with requests_cache.disabled():
+        get_time()
+        return f'{cg.ping()} AT {time} FROM {date}'
 
 def get_currency_support(name='all'):
     """
@@ -88,7 +66,6 @@ def get_currency_support(name='all'):
                 return True
             else:
                 return False
-
 
 def get_coin_id(name='all'):
     """
@@ -108,20 +85,18 @@ def get_coin_id(name='all'):
                 print(f'Error: coin "{name}" currently not supported.')
                 return
 
-
 def get_resume():
     """
     Get a resume of today's crypto market.
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     global_data = cg.get_global()
     df = pd.DataFrame(global_data, columns=['active_cryptocurrencies', 'upcoming_icos',
                                             'ongoing_icos', 'ended_icos', 'markets'], index=[0])
     df.index.name = f'{date}_{time}'
     return df
-
 
 def get_pub_treasury_data():
     """
@@ -129,7 +104,7 @@ def get_pub_treasury_data():
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     value_usd = {}
     btc_pub_treasury = cg.get_companies_public_treasury_by_coin_id('bitcoin')
     value_usd.update({'btc': btc_pub_treasury['total_value_usd']})
@@ -140,14 +115,13 @@ def get_pub_treasury_data():
     df.index.name = f'{date}_{time}'
     return df
 
-
 def get_total_mkt_cap():
     """
     Get market cap values in USD and BTC, and percentage of change in the last 24H.
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     global_data = cg.get_global()
     total_market_cap = {'usd': global_data['total_market_cap']['usd'], 'btc': global_data['total_market_cap']['btc'],
                         '%change_24h': global_data["market_cap_change_percentage_24h_usd"]}
@@ -155,19 +129,17 @@ def get_total_mkt_cap():
     df.index.name = f'{date}_{time}'
     return df
 
-
 def get_top10_mkt_cap_coins():
     """
     Get the top10 coins by market cap.
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     global_data = cg.get_global()
     df = pd.DataFrame(global_data["market_cap_percentage"], index=[0])
     df.index.name = f'{date}_{time}'
     return df
-
 
 def get_mkt_top100():
     """
@@ -175,13 +147,12 @@ def get_mkt_top100():
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     data = cg.get_coins_markets(vs_currency='usd', per_page=100)
     df = pd.DataFrame(data, columns=['market_cap_rank', 'id', 'symbol', 'current_price', 'price_change_percentage_24h',
                                      'low_24h', 'high_24h', 'total_volume'])
     df.index.name = f'{date}_{time}'
     return df
-
 
 def get_pair(coin='bitcoin', currency='usd'):
     """
@@ -191,7 +162,7 @@ def get_pair(coin='bitcoin', currency='usd'):
     :param currency: str
     :return: DataFrame
     """
-    update_time()
+    get_time()
     data = cg.get_price(coin, currency, include_market_cap='true', include_24hr_vol='true', include_24hr_change='true')
     df = pd.DataFrame.from_dict(data, orient='index')
     df.index.name = f'{date}_{time}'
@@ -199,7 +170,6 @@ def get_pair(coin='bitcoin', currency='usd'):
         print('Error: DataFrame is empty!')
         return
     return df
-
 
 def get_coins(*args):
     """
@@ -226,7 +196,6 @@ def get_coins(*args):
         return
     return df
 
-
 def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
     """
     Get coin historical values and volume.
@@ -248,7 +217,6 @@ def get_coin_hist(coin='bitcoin', currency='usd', timeframe=90):
         print('Error: DataFrame is empty!')
         return
     return df
-
 
 def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_time=None):
     """
@@ -277,7 +245,6 @@ def get_coin_hist_by_range(coin='bitcoin', currency='usd', from_time=None, to_ti
         return
     return df
 
-
 def get_coin_hist_ohlc(coin='bitcoin', currency='usd', timeframe=90):
     """
     Get coin historical OHLC.
@@ -291,7 +258,7 @@ def get_coin_hist_ohlc(coin='bitcoin', currency='usd', timeframe=90):
     :param timeframe: int
     :return: DataFrame
     """
-    update_time()
+    get_time()
     df = pd.DataFrame()
     data = cg.get_coin_ohlc_by_id(coin, currency, timeframe)
     c = 0
@@ -307,14 +274,13 @@ def get_coin_hist_ohlc(coin='bitcoin', currency='usd', timeframe=90):
     df.reset_index(inplace=True)
     return df
 
-
 def get_trending():
     """
     Get a list with the current trending coins.
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     data = cg.get_search_trending()
     df = pd.DataFrame()
     c = 0
@@ -337,17 +303,14 @@ def get_trending():
     df.index.name = f'{date}_{time}'
     return df
 
-
 def get_defi_mkt():
     """
     Get a resume about DeFi markets.
 
     :return: DataFrame
     """
-    update_time()
+    get_time()
     df = pd.DataFrame.from_dict(cg.get_global_decentralized_finance_defi(), orient='index', columns=['Value'])
     df.reset_index(inplace=True)
     df.index.name = f'{date}_{time}'
     return df
-
-

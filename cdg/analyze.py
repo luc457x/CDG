@@ -1,11 +1,14 @@
 # coding: utf-8
 
 from cdg.get import *
+from pandas_datareader import data as wb
+
 
 # Setup
 
-analyzed_port = {}
-expire_cache = datetime.timedelta(hours=11)
+
+
+# Funcs
 
 def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     """
@@ -23,7 +26,6 @@ def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     global analyzed_port
     if port is None:
         port = ['bitcoin', 'ethereum', 'binancecoin']
-    print('Analysing coins...')
     for coin in port:
         value = get_coin_hist_by_range(coin, currency, from_time, to_time).iloc[:, :2]
         price = pd.Series(value.iloc[:, 1])
@@ -32,9 +34,6 @@ def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
         data[coin] = price
     df = pd.DataFrame.from_dict(data)
     if bench is True:
-        session = requests_cache.CachedSession(cache_name=f'{files_path}/ycache', backend='sqlite',
-                                               expire_after=expire_cache)
-        session.headers = DEFAULT_HEADERS
         bench_data = {}
         bench_tickers = ['^DJI', '^GSPC', '^IXIC']
         for ticker in bench_tickers:
@@ -63,5 +62,3 @@ def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     analyzed_port["perform_normal"] = perform_normal
     analyzed_port["volatility"] = volatility
     return(analyzed_port)
-
-
