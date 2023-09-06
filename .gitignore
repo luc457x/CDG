@@ -1,12 +1,10 @@
 *.png
 *.xlsx
-*.sqlite
-.idea/
-**/__pycache__/
-/files/
-*.txt
 *.csv
 *.sqlite
+*.txt
+**/__pycache__/
+**/files/
 **/.ipynb_checkpoints/
-venv
+**/venv/
 **/cdg_files/
