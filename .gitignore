@@ -1,5 +1,6 @@
 *.png
 *.xlsx
+*.sqlite
 .idea/
 **/__pycache__/
 /files/

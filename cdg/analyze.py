@@ -37,13 +37,13 @@ def port(port=None, currency='usd', from_time=None, to_time=None, bench=True):
     df = pd.DataFrame.from_dict(data)
     if bench is True:
         bench_data = {}
-        bench_tickers = ['^DJI', '^GSPC', '^IXIC']
+        bench_tickers = ['^SP500BDT', '^GSPC', '^DJI', '^IXIC', '^HSI', '^BVSP']
         for ticker in bench_tickers:
             bench_data[ticker] = wb.DataReader(ticker, data_source='yahoo',
                                                start=str(df.index[0]),
                                                end=str(df.index[-1]), session=session)['Adj Close']
         bench = pd.DataFrame.from_dict(bench_data)
-        bench.rename(columns={'^DJI': 'dow jones', '^GSPC': 's&p500', '^IXIC': 'nasdaq'}, inplace=True)
+        bench.rename(columns={'^SP500BDT':'S&P500 Bounds', '^GSPC': 'S&P500', '^DJI': 'Dow Jones', '^IXIC': 'Nasdaq', '^HSI': 'Hang Seng Index', '^BVSP': 'B3'}, inplace=True)
         df = pd.concat([df, bench], axis=1)
         df.ffill(inplace=True)
         df.bfill(inplace=True)

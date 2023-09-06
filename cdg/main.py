@@ -3,8 +3,6 @@
 import datetime
 import requests_cache
 import pandas as pd
-import datetime
-import requests_cache
 from pathlib import Path
 from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
 
@@ -28,7 +26,21 @@ analyzed_port = {}
 mark_port = {}
 
 # Funcs
-def clear_cache():
+def check_cached():
 # ToDo: 
-    session = requests_cache.CachedSession()
+    session = requests_cache.CachedSession(cache_name=f'{files_path}/ycache', backend='sqlite', expire_after=expire_cache)
     session.headers = DEFAULT_HEADERS
+
+def df_float_precision(val='sn'):
+    """
+    Change how pandas represents float numbers(default = scientific notation or how much numbers after the decimal).
+
+    :param val: str or int
+    :return:
+    """
+    if val == 'sn':
+        pd.reset_option('display.float_format', silent=True)
+    elif type(val) == 'int':
+        pd.set_option('display.float_format', lambda x: str(f'%.{val}f') % x)
+    else:
+        return('error')

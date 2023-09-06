@@ -11,19 +11,6 @@ sns.set_theme(context='talk', style='darkgrid', palette='dark', font='dejavu ser
 
 # Funcs
 
-def change_float_precision(val='sn'):
-    """
-    Change how float numbers are represented (default scientific notation or how much numbers after the decimal).
-
-    :param val: str or int
-    :return:
-    """
-    if val == 'sn':
-        pd.reset_option('display.float_format', silent=True)
-    else:
-        pd.set_option('display.float_format', lambda x: str(f'%.{val}f') % x)
-
-
 def plot_set_theme(theme='dark'):
     """
     Change between plotting preset themes (dark, light or colorblind).
@@ -37,7 +24,6 @@ def plot_set_theme(theme='dark'):
         sns.set_theme(palette='deep')
     elif theme == 'colorblind':
         sns.set_theme(palette='colorblind')
-
 
 def plot_returns(x=18, y=6, close=True, log=False):
     """
@@ -64,7 +50,6 @@ def plot_returns(x=18, y=6, close=True, log=False):
     if close:
         plt.close()
 
-
 def plot_performance(x=18, y=6, close=True):
     """
     Save line-plot from performance of analysed coins data.
@@ -84,7 +69,6 @@ def plot_performance(x=18, y=6, close=True):
     plt.savefig(f'{files_path}/plot_performance_{date}_{time}.png')
     if close:
         plt.close()
-
 
 def plot_risk_return(x=18, y=6, close=True):
     """

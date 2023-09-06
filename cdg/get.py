@@ -8,7 +8,7 @@ from pycoingecko import CoinGeckoAPI
 
 # Setup
 
-cg = CoinGeckoAPI
+cg = CoinGeckoAPI()
 
 # Funcs
 
