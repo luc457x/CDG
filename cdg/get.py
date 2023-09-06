@@ -22,7 +22,7 @@ def get_time():
     date = datetime.datetime.now().strftime('%Y-%m-%d')
     time = datetime.datetime.now().strftime('%H-%M-%S')
 
-def get_sv_status():
+def get_ping():
     """
     Ping coingecko API.
 
@@ -30,7 +30,8 @@ def get_sv_status():
     """
     with requests_cache.disabled():
         get_time()
-        return f'{cg.ping()} AT {time} FROM {date}'
+        ping = cg.ping()
+        return f'{ping} AT {time} FROM {date}'
 
 def get_currency_support(name='all'):
     """
