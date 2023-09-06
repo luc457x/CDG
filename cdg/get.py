@@ -1,8 +1,9 @@
 # coding: utf-8
-# ToDo: Change usage of pandas to numpy when data need to will be calculated but not plotted.
+# ToDo: Change usage of pandas to numpy when data will be calculated but not plotted.
 
 from cdg.main import *
 import numpy as np
+from dateutil.relativedelta import relativedelta
 from pycoingecko import CoinGeckoAPI
 
 # Setup
@@ -21,7 +22,7 @@ def get_time():
     date = datetime.datetime.now().strftime('%Y-%m-%d')
     time = datetime.datetime.now().strftime('%H-%M-%S')
 
-def get_server_status():
+def get_sv_status():
     """
     Ping coingecko API.
 

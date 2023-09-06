@@ -15,5 +15,5 @@ df = pd.DataFrame(cdg.get_pub_treasury_data())
 print(pd.DataFrame(df))
 c = time.time() - start_time
 print(c)
-print(f"First get took {b-a}")
-print(f"Second get with chached session took {c-(b+a)}")
+print(f"First get without cached session took {b-a}.")
+print(f"Second get took {c-(b+a)}, a diff of {b-c}!")
