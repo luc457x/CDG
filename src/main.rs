@@ -5,7 +5,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Coin ID from CoinGecko (default: bitcoin)
+    /// Coin ID or comma-separated list of coin IDs from CoinGecko (default: bitcoin)
     #[arg(short, long, default_value = "bitcoin")]
     coin: String,
 
@@ -44,7 +44,6 @@ async fn main() -> Result<()> {
 
     // Lightweight override
     if args.light {
-        args.coin = "bitcoin".to_string();
         args.days = "30".to_string();
     }
 
@@ -72,13 +71,24 @@ async fn main() -> Result<()> {
         Err(e) => println!("Warning: CoinGecko API Connection Failed: {}", e),
     }
 
-    // 4. Calculate Timestamps
+    // 4. Calculate Timestamps (aligned to start of day for caching)
     let now = chrono::Utc::now().timestamp();
+    let rounded_now = (now / 86400) * 86400;
     let days_num: i64 = args.days.parse().unwrap_or(90);
-    let from_timestamp = now - (days_num * 24 * 60 * 60);
-    let to_timestamp = now;
+    let from_timestamp = rounded_now - (days_num * 24 * 60 * 60);
+    let to_timestamp = rounded_now;
 
-    // 5. Fetch CoinGecko target coin for each currency
+    // 5. Parse coins and currencies
+    let coins: Vec<&str> = args
+        .coin
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if coins.is_empty() {
+        return Err(anyhow::anyhow!("No coins specified"));
+    }
+
     let currencies: Vec<&str> = args
         .currency
         .split(',')
@@ -92,26 +102,24 @@ async fn main() -> Result<()> {
     let mut currency_dfs = Vec::new();
     let mut currency_cols = Vec::new();
 
-    for &curr in &currencies {
-        println!(
-            "Fetching CoinGecko market chart for {} in {}...",
-            args.coin, curr
-        );
-        let cg_val = cg_client
-            .get_coin_market_chart_range(&args.coin, curr, from_timestamp, to_timestamp)
-            .await?;
-        let cg_json_str = serde_json::to_string(&cg_val)?;
+    for &coin in &coins {
+        for &curr in &currencies {
+            println!(
+                "Fetching CoinGecko market chart for {} in {}...",
+                coin, curr
+            );
+            let cg_val = cg_client
+                .get_coin_market_chart_range(coin, curr, from_timestamp, to_timestamp)
+                .await?;
+            let cg_json_str = serde_json::to_string(&cg_val)?;
 
-        let price_col_name = if currencies.len() > 1 {
-            format!("{}_{}", args.coin, curr)
-        } else {
-            args.coin.clone()
-        };
-        currency_cols.push(price_col_name.clone());
+            let price_col_name = format!("{}_{}", coin, curr);
+            currency_cols.push(price_col_name.clone());
 
-        let df = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
-        println!("Loaded {} rows for {} in {}", df.height(), args.coin, curr);
-        currency_dfs.push(df);
+            let df = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
+            println!("Loaded {} rows for {} in {}", df.height(), coin, curr);
+            currency_dfs.push(df);
+        }
     }
 
     // Merge all currency DataFrames
@@ -150,9 +158,16 @@ async fn main() -> Result<()> {
     let aligned_df = analysis::align_datasets(&main_df, &other_dfs, args.drop_weekends)?;
     println!("Aligned DataFrame shape: {:?}", aligned_df.shape());
 
-    // 8. Compute indicators on target coin
+    // 8. Compute indicators on target coins conditionally
     println!("Computing technical indicators and returns...");
-    let mut final_df = analysis::compute_returns_and_indicators(&aligned_df, &currency_cols[0])?;
+    let mut final_df = aligned_df;
+    if args.light {
+        final_df = analysis::compute_returns_and_indicators(&final_df, &currency_cols[0])?;
+    } else {
+        for col in &currency_cols {
+            final_df = analysis::compute_returns_and_indicators(&final_df, col)?;
+        }
+    }
 
     // 9. Prep ML features if flagged
     if args.prep_ml {
@@ -171,30 +186,41 @@ async fn main() -> Result<()> {
     export::export_parquet(&mut final_df, &parquet_path)?;
 
     // 11. Plotting
-    let returns_cols = vec!["simple_return", "log_return"];
-    let returns_plot_path = format!("{}_returns.png", args.output_prefix);
-    println!("Saving returns plot to: {}", returns_plot_path);
-    if let Err(e) = plot::plot_line_chart(
-        &final_df,
-        &returns_cols,
-        &format!("{} Returns (%)", args.coin),
-        &returns_plot_path,
-    ) {
-        println!("Warning: Failed to generate returns plot: {}", e);
-    }
-
-    let perf_plot_path = format!("{}_performance.png", args.output_prefix);
-    println!("Saving performance plot to: {}", perf_plot_path);
-    if let Err(e) = plot::plot_performance(&final_df, &assets_to_plot, &perf_plot_path) {
-        println!("Warning: Failed to generate performance plot: {}", e);
-    }
-
     if !args.light {
+        for col in &currency_cols {
+            let returns_cols = [
+                format!("{}_simple_return", col),
+                format!("{}_log_return", col),
+            ];
+            let returns_cols_refs: Vec<&str> = returns_cols.iter().map(|s| s.as_str()).collect();
+            let returns_plot_path = format!("{}_{}_returns.png", args.output_prefix, col);
+            println!("Saving returns plot for {} to: {}", col, returns_plot_path);
+            if let Err(e) = plot::plot_line_chart(
+                &final_df,
+                &returns_cols_refs,
+                &format!("{} Returns (%)", col),
+                &returns_plot_path,
+            ) {
+                println!(
+                    "Warning: Failed to generate returns plot for {}: {}",
+                    col, e
+                );
+            }
+        }
+
+        let perf_plot_path = format!("{}_performance.png", args.output_prefix);
+        println!("Saving performance plot to: {}", perf_plot_path);
+        if let Err(e) = plot::plot_performance(&final_df, &assets_to_plot, &perf_plot_path) {
+            println!("Warning: Failed to generate performance plot: {}", e);
+        }
+
         let rr_plot_path = format!("{}_risk_return.png", args.output_prefix);
         println!("Saving risk/return plot to: {}", rr_plot_path);
         if let Err(e) = plot::plot_risk_return(&final_df, &assets_to_plot, &rr_plot_path) {
             println!("Warning: Failed to generate risk/return plot: {}", e);
         }
+    } else {
+        println!("Lightweight mode enabled: skipping plot generation.");
     }
 
     println!("CDG data pipeline completed successfully!");
