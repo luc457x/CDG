@@ -56,6 +56,12 @@ impl CoinGeckoClient {
             }
         }
 
+        // Rate-limiting delay on cache misses to prevent CoinGecko API 429
+        #[cfg(not(test))]
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        }
+
         // Fetch from API
         let response = self.client.get(&url).send().await?;
 
