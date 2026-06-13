@@ -340,16 +340,46 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
     let (_, bb_upper, bb_lower) = calculate_bollinger_bands(&prices, 20, 2.0);
 
     let mut out_df = df.clone();
-    out_df.insert_column(out_df.width(), Series::new("simple_return", smp_returns))?;
-    out_df.insert_column(out_df.width(), Series::new("log_return", log_returns))?;
-    out_df.insert_column(out_df.width(), Series::new("sma_20", sma20))?;
-    out_df.insert_column(out_df.width(), Series::new("ema_20", ema20))?;
-    out_df.insert_column(out_df.width(), Series::new("rsi_14", rsi14))?;
-    out_df.insert_column(out_df.width(), Series::new("macd_line", macd_line))?;
-    out_df.insert_column(out_df.width(), Series::new("macd_signal", macd_signal))?;
-    out_df.insert_column(out_df.width(), Series::new("macd_histogram", macd_hist))?;
-    out_df.insert_column(out_df.width(), Series::new("bollinger_upper", bb_upper))?;
-    out_df.insert_column(out_df.width(), Series::new("bollinger_lower", bb_lower))?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_simple_return", target_column), smp_returns),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_log_return", target_column), log_returns),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_sma_20", target_column), sma20),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_ema_20", target_column), ema20),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_rsi_14", target_column), rsi14),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_macd_line", target_column), macd_line),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_macd_signal", target_column), macd_signal),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_macd_histogram", target_column), macd_hist),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_bollinger_upper", target_column), bb_upper),
+    )?;
+    out_df.insert_column(
+        out_df.width(),
+        Series::new(&format!("{}_bollinger_lower", target_column), bb_lower),
+    )?;
 
     Ok(out_df)
 }
@@ -494,7 +524,7 @@ mod tests {
         .unwrap();
 
         // 1. Test forward fill (drop_weekends = false)
-        let aligned_ff = align_datasets(&base_df, &[stock_df.clone()], false).unwrap();
+        let aligned_ff = align_datasets(&base_df, std::slice::from_ref(&stock_df), false).unwrap();
         assert_eq!(aligned_ff.height(), 4);
         assert_eq!(
             aligned_ff.column("^GSPC").unwrap().f64().unwrap().get(1),
@@ -537,13 +567,13 @@ mod tests {
         .unwrap();
 
         let res = compute_returns_and_indicators(&df, "bitcoin").unwrap();
-        assert!(res.column("simple_return").is_ok());
-        assert!(res.column("log_return").is_ok());
-        assert!(res.column("sma_20").is_ok());
-        assert!(res.column("ema_20").is_ok());
-        assert!(res.column("rsi_14").is_ok());
-        assert!(res.column("macd_line").is_ok());
-        assert!(res.column("bollinger_upper").is_ok());
+        assert!(res.column("bitcoin_simple_return").is_ok());
+        assert!(res.column("bitcoin_log_return").is_ok());
+        assert!(res.column("bitcoin_sma_20").is_ok());
+        assert!(res.column("bitcoin_ema_20").is_ok());
+        assert!(res.column("bitcoin_rsi_14").is_ok());
+        assert!(res.column("bitcoin_macd_line").is_ok());
+        assert!(res.column("bitcoin_bollinger_upper").is_ok());
     }
 
     #[test]
