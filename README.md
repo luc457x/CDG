@@ -32,34 +32,41 @@ cargo build --release
 
 Run the compiled binary using `cargo run`.
 
-### Commands
+### Interactive Menu Mode
+If run without any subcommand, the program launches the **Interactive Menu Mode**, providing a terminal UI to select and configure actions (e.g. running the pipeline, pinging servers, listing coins, checking coin IDs, and getting raw OHLCV data):
+```bash
+cargo run
+```
 
-- **Basic pipeline run** (default parameters: bitcoin vs USD, 90 days range, includes benchmarks):
+### CLI Subcommands
+For automation and scripting, the following subcommands are supported:
+
+- **run-pipeline**: Runs the data collection, alignment, indicators computation, and portfolio optimization pipeline:
   ```bash
-  cargo run
+  cargo run -- run-pipeline -c bitcoin,ethereum -v usd -d 90
+  ```
+- **ping**: Pings CoinGecko and Yahoo Finance API servers to verify connectivity:
+  ```bash
+  cargo run -- ping
+  ```
+- **list-coins**: Fetches and displays the top 50 cryptocurrencies by market cap (USD):
+  ```bash
+  cargo run -- list-coins
+  ```
+- **trending**: Shows the current trending search coins on CoinGecko:
+  ```bash
+  cargo run -- trending
+  ```
+- **ohlcv**: Fetches and prints/exports raw candlestick data:
+  ```bash
+  cargo run -- ohlcv -c bitcoin -v usd --days 30 --format csv
+  ```
+- **check-coin**: Validates a CoinGecko ID and suggests close matches if invalid:
+  ```bash
+  cargo run -- check-coin --coin bnb
   ```
 
-- **Lightweight mode** (restricts footprint; fetches bitcoin only, 30 days range, skips stock benchmarks):
-  ```bash
-  cargo run -- --light
-  ```
-
-- **Enable Machine Learning scaling**:
-  ```bash
-  cargo run -- --prep-ml
-  ```
-
-- **Drop weekends** (instead of forward-filling Friday's stock prices):
-  ```bash
-  cargo run -- --drop-weekends
-  ```
-
-- **Full Options Help**:
-  ```bash
-  cargo run -- --help
-  ```
-
-### CLI Arguments & Options Reference
+### CLI Arguments & Options Reference (for `run-pipeline`)
 
 | Flag | Long Option | Description | Default |
 | :--- | :--- | :--- | :--- |
@@ -134,11 +141,12 @@ When there are at least two assets to compare, the program automatically runs a 
 
 ## Output Files Structure
 
-At the start of every pipeline run, a unique run directory is created under:
+At the start of every pipeline run or standalone OHLCV retrieval, directories are created under `cdg_files/`:
+
+### 1. Run Directory (for pipelines)
 `cdg_files/run_YYYYMMDD_HHMMSS/`
 
-The directory contains the following exported assets:
-
+Contains the complete aligned dataset, optimal weights, and generated charts:
 ```
 cdg_files/run_20260613_091730/
 ├── data.csv                # Complete aligned dataset (prices, indicators, scaled features)
@@ -148,4 +156,14 @@ cdg_files/run_20260613_091730/
 ├── performance.png         # Line plot comparing asset performance normalized to 100%
 ├── risk_return.png         # Scatter plot showing return mean vs volatility risk
 └── bitcoin_usd_returns.png # Returns line charts for each coin-currency pair
+```
+
+### 2. Raw OHLCV Directory (created for raw exports)
+`cdg_files/can_YYYYMMDD_HHMMSS/`
+
+Contains raw fetched candlestick data in both JSON and CSV format for each coin-currency pair:
+```
+cdg_files/can_20260613_091730/
+├── bitcoin_usd.csv         # Raw OHLCV data in CSV format (timestamp, open, high, low, close)
+└── bitcoin_usd.json        # Raw OHLCV data in JSON format
 ```
