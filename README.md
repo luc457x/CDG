@@ -1,4 +1,4 @@
-# CryptoDataGather (CDG) - Rust Edition
+# CryptoDataGather (CDG)
 
 A robust, modular, and performance-efficient Rust application and library to collect, cache, and pre-process market data from CoinGecko (cryptocurrency) and Yahoo Finance (traditional stock benchmarks).
 
@@ -58,13 +58,13 @@ Run the compiled binary using `cargo run`.
 
 ### CLI Arguments
 
-| Flag | Long Option | Description | Default |
-|------|-------------|-------------|---------|
-| `-c` | `--coin` | Coin ID from CoinGecko | `bitcoin` |
-| `-v` | `--currency`| Vs currency for CoinGecko | `usd` |
-| `-d` | `--days` | Timeframe in days to retrieve | `90` |
-| | `--prep-ml` | Enable MinMax and Z-Score scaling | `false` |
-| | `--light` | Enable GCP lightweight constraints | `false` |
-| | `--drop-weekends`| Drop weekends instead of forward-filling stock data | `false` |
-| | `--db-path` | SQLite cache file path | `cdg_files/cache.db` |
-| `-o` | `--output-prefix` | Output file path prefix | `cdg_files/output` |
+| Flag | Long Option       | Description                                         | Default              |
+| ------| -------------------| -----------------------------------------------------| ----------------------|
+| `-c` | `--coin`          | Coin ID from CoinGecko                              | `bitcoin`            |
+| `-v` | `--currency`      | Vs currency for CoinGecko                           | `usd`                |
+| `-d` | `--days`          | Timeframe in days to retrieve                       | `90`                 |
+|      | `--prep-ml`       | Enable MinMax and Z-Score scaling                   | `false`              |
+|      | `--light`         | Enable GCP lightweight constraints                  | `false`              |
+|      | `--drop-weekends` | Drop weekends instead of forward-filling stock data | `false`              |
+|      | `--db-path`       | SQLite cache file path                              | `cdg_files/cache.db` |
+| `-o` | `--output-prefix` | Output file path prefix                             | `cdg_files/output`   |
