@@ -3,6 +3,13 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde_json::Value;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CoinSuggestion {
+    pub id: String,
+    pub symbol: String,
+    pub name: String,
+}
+
 pub struct CoinGeckoClient {
     client: Client,
     cache: Cache,
@@ -54,38 +61,60 @@ impl CoinGeckoClient {
             }
         }
 
-        // Rate-limiting delay on cache misses to prevent CoinGecko API 429
-        #[cfg(not(test))]
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        let mut attempts = 0;
+        let max_attempts = 4;
+        let mut retry_delay = std::time::Duration::from_millis(10000);
+
+        loop {
+            if attempts == 0 {
+                // Rate-limiting delay on cache misses to prevent CoinGecko API 429
+                #[cfg(not(test))]
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+                }
+            }
+
+            // Fetch from API using reqwest's built-in query encoding
+            let response = self
+                .client
+                .get(&base_endpoint)
+                .query(query_params)
+                .send()
+                .await?;
+
+            let status = response.status();
+
+            if status == 429 {
+                attempts += 1;
+                if attempts >= max_attempts {
+                    return Err(anyhow!(
+                        "CoinGecko API Rate Limit Exceeded (429) after {} attempts",
+                        max_attempts
+                    ));
+                }
+                eprintln!(
+                    "Warning: CoinGecko API Rate Limit Exceeded (429). Retrying in {:.1}s... (Attempt {}/{})",
+                    retry_delay.as_secs_f32(),
+                    attempts,
+                    max_attempts
+                );
+                tokio::time::sleep(retry_delay).await;
+                retry_delay *= 2;
+                continue;
+            }
+
+            if !status.is_success() {
+                return Err(anyhow!("CoinGecko API returned error status: {}", status));
+            }
+
+            let body = response.text().await?;
+
+            if use_cache {
+                self.cache.insert(&cache_url, &body).await?;
+            }
+
+            return Ok(body);
         }
-
-        // Fetch from API using reqwest's built-in query encoding
-        let response = self
-            .client
-            .get(&base_endpoint)
-            .query(query_params)
-            .send()
-            .await?;
-
-        if response.status() == 429 {
-            return Err(anyhow!("CoinGecko API Rate Limit Exceeded (429)"));
-        }
-
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "CoinGecko API returned error status: {}",
-                response.status()
-            ));
-        }
-
-        let body = response.text().await?;
-
-        if use_cache {
-            self.cache.insert(&cache_url, &body).await?;
-        }
-
-        Ok(body)
     }
 
     pub async fn ping(&self) -> Result<Value> {
@@ -207,5 +236,87 @@ impl CoinGeckoClient {
             .get_request("/global/decentralized_finance_defi", &[], true)
             .await?;
         Ok(serde_json::from_str(&res)?)
+    }
+
+    pub async fn check_coin_id(&self, input: &str) -> Result<Option<Vec<CoinSuggestion>>> {
+        let coin_list = self.get_coins_list().await?;
+        let input_lower = input.to_lowercase();
+
+        // Check exact ID match
+        let mut exact_id_found = false;
+        for coin in &coin_list {
+            if let Some(id) = coin.get("id").and_then(|v| v.as_str()) {
+                if id.to_lowercase() == input_lower {
+                    exact_id_found = true;
+                    break;
+                }
+            }
+        }
+
+        if exact_id_found {
+            return Ok(None);
+        }
+
+        // Gather suggestions
+        let mut suggestions = Vec::new();
+
+        // 1. Exact symbol matches
+        for coin in &coin_list {
+            let id = coin
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let symbol = coin
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = coin
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if symbol.to_lowercase() == input_lower {
+                suggestions.push(CoinSuggestion { id, symbol, name });
+            }
+        }
+
+        // 2. Substring matches
+        if suggestions.len() < 10 {
+            for coin in &coin_list {
+                let id = coin
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let symbol = coin
+                    .get("symbol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = coin
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if suggestions.iter().any(|s| s.id == id) {
+                    continue;
+                }
+
+                if id.to_lowercase().contains(&input_lower)
+                    || name.to_lowercase().contains(&input_lower)
+                {
+                    suggestions.push(CoinSuggestion { id, symbol, name });
+                    if suggestions.len() >= 10 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(Some(suggestions))
     }
 }

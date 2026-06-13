@@ -99,3 +99,98 @@ async fn test_coingecko_tickers() {
     let _ = std::fs::remove_file(db_path);
     drop(_server_handle);
 }
+
+#[tokio::test]
+async fn test_coingecko_check_coin_id() {
+    use cdg::api::coingecko::CoinSuggestion;
+
+    let db_path = "tests/test_coingecko_resolve_coin_id.db";
+    let _ = std::fs::remove_file(db_path);
+    let cache = Cache::new(db_path).await.unwrap();
+
+    let mock_response = r#"[
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+        {"id": "binancecoin", "symbol": "bnb", "name": "BNB"}
+    ]"#;
+    let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
+
+    let client = CoinGeckoClient::new(cache).unwrap().with_base_url(base_url);
+
+    // Test exact ID match (case-insensitive) - should return None
+    assert_eq!(client.check_coin_id("Bitcoin").await.unwrap(), None);
+
+    // Test symbol match - should suggest binancecoin
+    let suggestions = client.check_coin_id("bnb").await.unwrap().unwrap();
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(
+        suggestions[0],
+        CoinSuggestion {
+            id: "binancecoin".to_string(),
+            symbol: "bnb".to_string(),
+            name: "BNB".to_string(),
+        }
+    );
+
+    // Test non-existent coin - should return empty suggestions
+    let suggestions_empty = client
+        .check_coin_id("unknown_token")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(suggestions_empty.is_empty());
+
+    let _ = std::fs::remove_file(db_path);
+    drop(_server_handle);
+}
+
+#[tokio::test]
+async fn test_coingecko_list_coins() {
+    let db_path = "tests/test_coingecko_list_coins.db";
+    let _ = std::fs::remove_file(db_path);
+    let cache = Cache::new(db_path).await.unwrap();
+
+    let mock_response = r#"[{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}]"#;
+    let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
+
+    let client = CoinGeckoClient::new(cache).unwrap().with_base_url(base_url);
+    let val = client.get_coins_list().await.unwrap();
+    assert_eq!(val.len(), 1);
+    assert_eq!(val[0]["id"], "bitcoin");
+
+    let _ = std::fs::remove_file(db_path);
+    drop(_server_handle);
+}
+
+#[tokio::test]
+async fn test_coingecko_trending() {
+    let db_path = "tests/test_coingecko_trending.db";
+    let _ = std::fs::remove_file(db_path);
+    let cache = Cache::new(db_path).await.unwrap();
+
+    let mock_response = r#"{"coins": [{"item": {"id": "bitcoin", "name": "Bitcoin"}}]}"#;
+    let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
+
+    let client = CoinGeckoClient::new(cache).unwrap().with_base_url(base_url);
+    let val = client.get_search_trending().await.unwrap();
+    assert_eq!(val["coins"][0]["item"]["id"], "bitcoin");
+
+    let _ = std::fs::remove_file(db_path);
+    drop(_server_handle);
+}
+
+#[tokio::test]
+async fn test_yahoo_ping() {
+    let db_path = "tests/test_yahoo_ping.db";
+    let _ = std::fs::remove_file(db_path);
+    let cache = Cache::new(db_path).await.unwrap();
+
+    let mock_json = r#"{"chart":{"result":[{"timestamp":[1700000000],"indicators":{"quote":[{"close":[5050.0]}],"adjclose":[{"adjclose":[5050.0]}]}}],"error":null}}"#;
+    let (base_url, _server_handle) = start_mock_server(mock_json.to_string()).await;
+
+    let client = YahooClient::new(cache).unwrap().with_base_url(base_url);
+    let val = client.ping().await;
+    assert!(val.is_ok());
+
+    let _ = std::fs::remove_file(db_path);
+    drop(_server_handle);
+}

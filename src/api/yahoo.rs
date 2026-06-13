@@ -61,4 +61,10 @@ impl YahooClient {
 
         Ok(body)
     }
+
+    pub async fn ping(&self) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.fetch_ticker_chart("^GSPC", now - 86400, now).await?;
+        Ok(())
+    }
 }

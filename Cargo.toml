@@ -16,6 +16,9 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 indicatif = "0.17"
 cli-table = "0.4"
+dialoguer = "0.11"
+
+
 
 [profile.dev]
 codegen-units = 1
