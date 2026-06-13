@@ -8,7 +8,7 @@ tokio = { version = "1.35", features = ["full"] }
 reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 polars = { version = "0.36", features = ["lazy", "temporal", "parquet", "csv"] }
 plotters = "0.3"
 clap = { version = "4.4", features = ["derive"] }
