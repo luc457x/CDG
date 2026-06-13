@@ -1,6 +1,14 @@
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
+/// Annualization factor used for both return and volatility scaling.
+///
+/// Crypto markets trade 24/7/365, so 365 is the correct factor for a pure-crypto
+/// portfolio. For mixed crypto/stock portfolios this slightly overstates stock
+/// volatility (convention is 252 trading days), which is documented here as a
+/// known limitation. A dedicated per-asset factor can be introduced if needed.
+const TRADING_DAYS_PER_YEAR: f64 = 365.0;
+
 #[derive(Debug, Clone)]
 pub struct Portfolio {
     pub weights: Vec<f64>,
@@ -46,14 +54,14 @@ pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
     num_simulations: usize,
+    seed: Option<u64>,
 ) -> Result<OptimizationResult> {
     let m = assets.len();
     if m == 0 {
         return Err(anyhow!("No assets provided for portfolio optimization"));
     }
 
-    let n_rows = df.height();
-    if n_rows < 2 {
+    if df.height() < 2 {
         return Err(anyhow!("Insufficient data rows for covariance calculation"));
     }
 
@@ -61,25 +69,29 @@ pub fn run_monte_carlo(
     let mut returns = Vec::with_capacity(m);
     for asset in assets {
         let series = df.column(asset)?;
+        // Filter to non-null prices only to avoid fake zero-price spikes corrupting returns
         let prices: Vec<f64> = series
             .f64()?
             .into_iter()
-            .map(|opt| opt.unwrap_or(0.0))
+            .flatten()
+            .filter(|&p| p > 0.0)
             .collect();
 
-        let mut asset_returns = Vec::with_capacity(n_rows - 1);
+        let mut asset_returns = Vec::with_capacity(prices.len().saturating_sub(1));
         for i in 1..prices.len() {
             let prev = prices[i - 1];
-            if prev > 0.0 {
-                asset_returns.push((prices[i] - prev) / prev);
-            } else {
-                asset_returns.push(0.0);
-            }
+            asset_returns.push((prices[i] - prev) / prev);
         }
         returns.push(asset_returns);
     }
 
-    let t = n_rows - 1;
+    // Use the minimum return series length for covariance (in case null counts differ per asset)
+    let t = returns.iter().map(|r| r.len()).min().unwrap_or(0);
+    if t < 1 {
+        return Err(anyhow!(
+            "Insufficient non-null price data for covariance calculation"
+        ));
+    }
 
     // 2. Compute mean returns (daily)
     let mut mean_returns = vec![0.0; m];
@@ -116,7 +128,7 @@ pub fn run_monte_carlo(
     };
 
     let mut simulated_points = Vec::with_capacity(num_simulations);
-    let mut rng = Xorshift::new(1337); // Fixed seed for reproducibility
+    let mut rng = Xorshift::new(seed.unwrap_or(1337));
 
     let pb = if cfg!(test) {
         indicatif::ProgressBar::hidden()
@@ -161,9 +173,9 @@ pub fn run_monte_carlo(
         }
         let p_vol = p_var.sqrt();
 
-        // Annualize (using 365 days)
-        let ann_ret = p_ret * 365.0;
-        let ann_vol = p_vol * 365.0f64.sqrt();
+        // Annualize (using TRADING_DAYS_PER_YEAR)
+        let ann_ret = p_ret * TRADING_DAYS_PER_YEAR;
+        let ann_vol = p_vol * TRADING_DAYS_PER_YEAR.sqrt();
         let sharpe = if ann_vol > 0.0 {
             ann_ret / ann_vol
         } else {
@@ -304,7 +316,7 @@ mod tests {
         .unwrap();
 
         let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
-        let result = run_monte_carlo(&df, &assets, 500).unwrap();
+        let result = run_monte_carlo(&df, &assets, 500, None).unwrap();
 
         // Verify simulated points count
         assert_eq!(result.simulated_points.len(), 500);

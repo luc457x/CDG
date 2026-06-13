@@ -10,16 +10,15 @@ pub struct YahooClient {
 }
 
 impl YahooClient {
-    pub fn new(cache: Cache) -> Self {
-        Self {
+    pub fn new(cache: Cache) -> Result<Self> {
+        Ok(Self {
             client: Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                .build()
-                .unwrap(),
+                .build()?,
             cache,
             base_url: "https://query2.finance.yahoo.com/v8/finance/chart".to_string(),
             ttl_secs: 300, // 5 minutes cache default
-        }
+        })
     }
 
     pub fn with_ttl(mut self, ttl_secs: i64) -> Self {

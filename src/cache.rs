@@ -102,9 +102,9 @@ mod tests {
         let val = cache.get("http://test.com/api", 10).await.unwrap();
         assert_eq!(val, Some("{\"status\":\"ok\"}".to_string()));
 
-        // Test expiration
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-        let val_expired = cache.get("http://test.com/api", 1).await.unwrap();
+        // Test expiration: ttl_secs=0 means any cached entry is immediately expired.
+        // This avoids a real sleep and keeps the test deterministic and fast.
+        let val_expired = cache.get("http://test.com/api", 0).await.unwrap();
         assert_eq!(val_expired, None);
 
         // Cleanup

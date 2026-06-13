@@ -678,70 +678,105 @@ fn calculate_obv(close: &[f64], volume: &[f64]) -> Vec<Option<f64>> {
 
 pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Result<DataFrame> {
     let prices_series = df.column(target_column)?;
-    let prices: Vec<f64> = prices_series
-        .f64()?
-        .into_iter()
-        .map(|opt| opt.unwrap_or(0.0))
+    let prices_raw: Vec<Option<f64>> = prices_series.f64()?.into_iter().collect();
+    let n = prices_raw.len();
+
+    // Build index map and filtered price slice, skipping nulls
+    let valid_indices: Vec<usize> = prices_raw
+        .iter()
+        .enumerate()
+        .filter_map(|(i, opt)| if opt.is_some() { Some(i) } else { None })
+        .collect();
+    let prices: Vec<f64> = valid_indices
+        .iter()
+        .map(|&i| prices_raw[i].unwrap())
         .collect();
 
-    // Returns
-    let mut smp_returns = vec![None; prices.len()];
-    let mut log_returns = vec![None; prices.len()];
+    // Returns (computed over the valid filtered slice)
+    let mut smp_returns_filtered = vec![None; prices.len()];
+    let mut log_returns_filtered = vec![None; prices.len()];
     for i in 1..prices.len() {
         let prev = prices[i - 1];
         if prev != 0.0 {
-            smp_returns[i] = Some(((prices[i] / prev) - 1.0) * 100.0);
-            log_returns[i] = Some((prices[i] / prev).ln() * 100.0);
+            smp_returns_filtered[i] = Some(((prices[i] / prev) - 1.0) * 100.0);
+            log_returns_filtered[i] = Some((prices[i] / prev).ln() * 100.0);
         }
     }
 
-    // Indicators
+    // Indicators (computed over the valid filtered slice)
     let sma20 = calculate_sma(&prices, 20);
     let ema20 = calculate_ema(&prices, 20);
     let rsi14 = calculate_rsi(&prices, 14);
     let (macd_line, macd_signal, macd_hist) = calculate_macd(&prices);
     let (_, bb_upper, bb_lower) = calculate_bollinger_bands(&prices, 20, 2.0);
 
+    // Scatter filtered results back to full-length vectors
+    let scatter = |filtered: &[Option<f64>]| -> Vec<Option<f64>> {
+        let mut full = vec![None; n];
+        for (pos, &idx) in valid_indices.iter().enumerate() {
+            full[idx] = filtered[pos];
+        }
+        full
+    };
+
     let mut out_df = df.clone();
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_simple_return", target_column), smp_returns),
+        Series::new(
+            &format!("{}_simple_return", target_column),
+            scatter(&smp_returns_filtered),
+        ),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_log_return", target_column), log_returns),
+        Series::new(
+            &format!("{}_log_return", target_column),
+            scatter(&log_returns_filtered),
+        ),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_sma_20", target_column), sma20),
+        Series::new(&format!("{}_sma_20", target_column), scatter(&sma20)),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_ema_20", target_column), ema20),
+        Series::new(&format!("{}_ema_20", target_column), scatter(&ema20)),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_rsi_14", target_column), rsi14),
+        Series::new(&format!("{}_rsi_14", target_column), scatter(&rsi14)),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_macd_line", target_column), macd_line),
+        Series::new(&format!("{}_macd_line", target_column), scatter(&macd_line)),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_macd_signal", target_column), macd_signal),
+        Series::new(
+            &format!("{}_macd_signal", target_column),
+            scatter(&macd_signal),
+        ),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_macd_histogram", target_column), macd_hist),
+        Series::new(
+            &format!("{}_macd_histogram", target_column),
+            scatter(&macd_hist),
+        ),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_bollinger_upper", target_column), bb_upper),
+        Series::new(
+            &format!("{}_bollinger_upper", target_column),
+            scatter(&bb_upper),
+        ),
     )?;
     out_df.insert_column(
         out_df.width(),
-        Series::new(&format!("{}_bollinger_lower", target_column), bb_lower),
+        Series::new(
+            &format!("{}_bollinger_lower", target_column),
+            scatter(&bb_lower),
+        ),
     )?;
 
     // Advanced technical indicators (ATR, Stochastic, ADX, OBV) if columns exist
@@ -750,17 +785,16 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
     let vol_col = format!("{}_volume", target_column);
 
     if df.column(&high_col).is_ok() && df.column(&low_col).is_ok() {
-        let highs_series = df.column(&high_col)?;
-        let highs: Vec<f64> = highs_series
-            .f64()?
-            .into_iter()
-            .map(|opt| opt.unwrap_or(0.0))
+        let highs_raw: Vec<Option<f64>> = df.column(&high_col)?.f64()?.into_iter().collect();
+        let lows_raw: Vec<Option<f64>> = df.column(&low_col)?.f64()?.into_iter().collect();
+
+        let highs: Vec<f64> = valid_indices
+            .iter()
+            .map(|&i| highs_raw[i].unwrap_or(0.0))
             .collect();
-        let lows_series = df.column(&low_col)?;
-        let lows: Vec<f64> = lows_series
-            .f64()?
-            .into_iter()
-            .map(|opt| opt.unwrap_or(0.0))
+        let lows: Vec<f64> = valid_indices
+            .iter()
+            .map(|&i| lows_raw[i].unwrap_or(0.0))
             .collect();
 
         let atr = calculate_atr(&highs, &lows, &prices, 14);
@@ -769,34 +803,33 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
 
         out_df.insert_column(
             out_df.width(),
-            Series::new(&format!("{}_atr_14", target_column), atr),
+            Series::new(&format!("{}_atr_14", target_column), scatter(&atr)),
         )?;
         out_df.insert_column(
             out_df.width(),
-            Series::new(&format!("{}_stoch_k_14", target_column), stoch_k),
+            Series::new(&format!("{}_stoch_k_14", target_column), scatter(&stoch_k)),
         )?;
         out_df.insert_column(
             out_df.width(),
-            Series::new(&format!("{}_stoch_d_3", target_column), stoch_d),
+            Series::new(&format!("{}_stoch_d_3", target_column), scatter(&stoch_d)),
         )?;
         out_df.insert_column(
             out_df.width(),
-            Series::new(&format!("{}_adx_14", target_column), adx),
+            Series::new(&format!("{}_adx_14", target_column), scatter(&adx)),
         )?;
     }
 
     if df.column(&vol_col).is_ok() {
-        let vols_series = df.column(&vol_col)?;
-        let vols: Vec<f64> = vols_series
-            .f64()?
-            .into_iter()
-            .map(|opt| opt.unwrap_or(0.0))
+        let vols_raw: Vec<Option<f64>> = df.column(&vol_col)?.f64()?.into_iter().collect();
+        let vols: Vec<f64> = valid_indices
+            .iter()
+            .map(|&i| vols_raw[i].unwrap_or(0.0))
             .collect();
 
         let obv = calculate_obv(&prices, &vols);
         out_df.insert_column(
             out_df.width(),
-            Series::new(&format!("{}_obv", target_column), obv),
+            Series::new(&format!("{}_obv", target_column), scatter(&obv)),
         )?;
     }
 
@@ -819,27 +852,33 @@ pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
         let series = df.column(&name)?;
         let values: Vec<Option<f64>> = series.f64()?.into_iter().collect();
 
-        // Calculate min, max, mean, std
+        // Calculate min, max, mean, std using sample variance (N-1) to match sklearn convention
         let valid_values: Vec<f64> = values.iter().filter_map(|&v| v).collect();
 
         if valid_values.is_empty() {
             continue;
         }
 
+        let n = valid_values.len();
         let min = valid_values.iter().copied().fold(f64::INFINITY, f64::min);
         let max = valid_values
             .iter()
             .copied()
             .fold(f64::NEG_INFINITY, f64::max);
-        let mean: f64 = valid_values.iter().sum::<f64>() / valid_values.len() as f64;
-        let variance: f64 = valid_values
-            .iter()
-            .map(|&x| {
-                let diff = x - mean;
-                diff * diff
-            })
-            .sum::<f64>()
-            / valid_values.len() as f64;
+        let mean: f64 = valid_values.iter().sum::<f64>() / n as f64;
+        // Sample variance (N-1) matches sklearn StandardScaler default
+        let variance: f64 = if n > 1 {
+            valid_values
+                .iter()
+                .map(|&x| {
+                    let diff = x - mean;
+                    diff * diff
+                })
+                .sum::<f64>()
+                / (n - 1) as f64
+        } else {
+            0.0
+        };
         let std = if variance > 0.0 { variance.sqrt() } else { 1.0 };
 
         // MinMax

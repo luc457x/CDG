@@ -73,11 +73,9 @@ Run the compiled binary using `cargo run`.
 
 ## Technical Details & Pipeline Concepts
 
-To help developers and data scientists understand the inner workings of the tool, here is an in-depth explanation of the main concepts:
-
 ### 1. Machine Learning Preprocessing (`--prep-ml`)
 
-When you run with the `--prep-ml` flag, the pipeline generates normalized features for downstream model training (e.g., PyTorch, TensorFlow, or Scikit-Learn). 
+When run with the `--prep-ml` flag, the pipeline generates normalized features for downstream model training (e.g., PyTorch, TensorFlow, or Scikit-Learn). 
 
 **Important Behavior:**
 - It does **not** overwrite or normalize your original columns in-place.
@@ -138,29 +136,3 @@ cdg_files/run_20260613_091730/
 ├── risk_return.png         # Scatter plot showing return mean vs volatility risk
 └── bitcoin_usd_returns.png # Returns line charts for each coin-currency pair
 ```
-
----
-
-## High-Level Execution Workflow
-
-```mermaid
-graph TD
-    A[Start Pipeline CLI] --> B[Ping APIs & Retrieve Orderbook Metrics]
-    B --> C{Cache Hit?}
-    C -- Yes --> D[Load Cached API JSON]
-    C -- No --> E[Wait 2s & Fetch API Live JSON]
-    E --> F[Cache Response in SQLite]
-    F --> G[Parse JSON to Polars DataFrame]
-    D --> G
-    G --> H[Align Crypto and Stock Benchmark Data]
-    H --> I[Compute Technical Indicators & Returns]
-    I --> J{--prep-ml enabled?}
-    J -- Yes --> K[Generate _minmax and _standard columns]
-    J -- No --> L[Export CSV & Parquet to Run Directory]
-    K --> L
-    L --> M[Generate Visualizations & PNG Plots]
-    M --> N[Run Monte Carlo Portfolio Optimizer]
-    N --> O[Print Weights & Metrics ASCII Tables]
-    O --> P[Finish Pipeline Run]
-```
-

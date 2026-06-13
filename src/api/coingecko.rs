@@ -11,16 +11,15 @@ pub struct CoinGeckoClient {
 }
 
 impl CoinGeckoClient {
-    pub fn new(cache: Cache) -> Self {
-        Self {
+    pub fn new(cache: Cache) -> Result<Self> {
+        Ok(Self {
             client: Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                .build()
-                .unwrap(),
+                .build()?,
             cache,
             base_url: "https://api.coingecko.com/api/v3".to_string(),
             ttl_secs: 300, // 5 minutes cache default
-        }
+        })
     }
 
     pub fn with_ttl(mut self, ttl_secs: i64) -> Self {
@@ -39,19 +38,18 @@ impl CoinGeckoClient {
         query_params: &[(&str, &str)],
         use_cache: bool,
     ) -> Result<String> {
-        // Build full URL
-        let mut url = format!("{}{}", self.base_url, endpoint);
-        if !query_params.is_empty() {
-            let query_str = query_params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<String>>()
-                .join("&");
-            url = format!("{}?{}", url, query_str);
-        }
+        // Build canonical URL via reqwest so query params are percent-encoded
+        let base_endpoint = format!("{}{}", self.base_url, endpoint);
+        let cache_url = if query_params.is_empty() {
+            base_endpoint.clone()
+        } else {
+            reqwest::Url::parse_with_params(&base_endpoint, query_params)
+                .map(|u| u.to_string())
+                .unwrap_or(base_endpoint.clone())
+        };
 
         if use_cache {
-            if let Some(cached) = self.cache.get(&url, self.ttl_secs).await? {
+            if let Some(cached) = self.cache.get(&cache_url, self.ttl_secs).await? {
                 return Ok(cached);
             }
         }
@@ -62,8 +60,13 @@ impl CoinGeckoClient {
             tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         }
 
-        // Fetch from API
-        let response = self.client.get(&url).send().await?;
+        // Fetch from API using reqwest's built-in query encoding
+        let response = self
+            .client
+            .get(&base_endpoint)
+            .query(query_params)
+            .send()
+            .await?;
 
         if response.status() == 429 {
             return Err(anyhow!("CoinGecko API Rate Limit Exceeded (429)"));
@@ -79,7 +82,7 @@ impl CoinGeckoClient {
         let body = response.text().await?;
 
         if use_cache {
-            self.cache.insert(&url, &body).await?;
+            self.cache.insert(&cache_url, &body).await?;
         }
 
         Ok(body)

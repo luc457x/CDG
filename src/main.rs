@@ -15,8 +15,8 @@ struct Args {
     currency: String,
 
     /// Timeframe in days (default: 90)
-    #[arg(short, long, default_value = "90")]
-    days: String,
+    #[arg(short, long, default_value_t = 90)]
+    days: u32,
 
     /// Enable ML preprocessing pipeline (scaling)
     #[arg(long)]
@@ -37,6 +37,10 @@ struct Args {
     /// Path to export results (default: cdg_files/output)]
     #[arg(short, long, default_value = "cdg_files/output")]
     output_prefix: String,
+
+    /// Optional RNG seed for Monte Carlo simulation (default: 1337)
+    #[arg(long)]
+    seed: Option<u64>,
 }
 
 #[tokio::main]
@@ -45,7 +49,7 @@ async fn main() -> Result<()> {
 
     // Lightweight override
     if args.light {
-        args.days = "30".to_string();
+        args.days = 30;
     }
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -62,14 +66,19 @@ async fn main() -> Result<()> {
     println!("Drop Weekends: {}", args.drop_weekends);
     println!("DB Path: {}", args.db_path);
     println!("Output Prefix: {}", args.output_prefix);
+    println!(
+        "Seed: {}",
+        args.seed
+            .map_or("default (1337)".to_string(), |s| s.to_string())
+    );
 
     // 1. Initialize Cache
     println!("Initializing SQLite Cache...");
     let cache = cache::Cache::new(&args.db_path).await?;
 
     // 2. Initialize Clients
-    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone());
-    let yahoo_client = api::yahoo::YahooClient::new(cache.clone());
+    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
+    let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?;
 
     // 3. Ping CoinGecko
     match cg_client.ping().await {
@@ -80,7 +89,7 @@ async fn main() -> Result<()> {
     // 4. Calculate Timestamps (aligned to start of day for caching)
     let now = chrono::Utc::now().timestamp();
     let rounded_now = (now / 86400) * 86400;
-    let days_num: i64 = args.days.parse().unwrap_or(90);
+    let days_num: i64 = args.days as i64;
     let from_timestamp = rounded_now - (days_num * 24 * 60 * 60);
     let to_timestamp = rounded_now;
 
@@ -177,7 +186,9 @@ async fn main() -> Result<()> {
                 "Fetching CoinGecko OHLC for {} in {}...",
                 coin, curr
             ));
-            let ohlc_val = cg_client.get_coin_ohlc(coin, curr, &args.days).await?;
+            let ohlc_val = cg_client
+                .get_coin_ohlc(coin, curr, &args.days.to_string())
+                .await?;
             let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
             let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
 
@@ -316,7 +327,7 @@ async fn main() -> Result<()> {
         println!("\n==================================================");
         println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
         println!("==================================================");
-        match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, 10000) {
+        match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, 10000, args.seed) {
             Ok(opt_res) => {
                 println!("\nOptimal Portfolio Formulations (Annualized):");
                 let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
