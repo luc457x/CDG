@@ -1,3 +1,40 @@
+# Rust build target
+target/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# AI Agent files
+AGENTS.md
+.agentignore
+.agents/
+
+# Python virtual env
+.venv/
+*/.venv/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.editorconfig
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Project files
 *.png
 *.xlsx
 *.csv
@@ -8,3 +45,4 @@
 **/.ipynb_checkpoints/
 **/venv/
 **/cdg_files/
+target_new/
