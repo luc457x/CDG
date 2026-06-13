@@ -13,7 +13,10 @@ This project has been implemented in Rust, optimizing hosting footprint and data
 - **ML Preprocessing**: Normalizes all indicators/prices using MinMax scaling and Standard Z-Score normalization (`--prep-ml`) for downstream Python / PyTorch / Jupyter ML training.
 - **Plotting**: Generates high-quality PNG visualization charts for normalized performance, percentage returns, and risk/return scatter profiles.
 - **Lightweight Mode**: A memory-friendly mode optimized for GCP free-tier Cloud Run / micro instances that limits calculations to Bitcoin and the last 30 days of data.
+- **Portfolio Optimization**: Runs annualized Monte Carlo portfolio simulation to determine Max Sharpe Ratio and Minimum Volatility weights.
+- **CLI Polish**: Integrates real-time progress feedback (spinners/progress bars) and logs final optimal portfolios in clean ASCII tables.
 - **Clean Architecture**: Compiles as both a CLI tool (`cdg`) and a reusable library (`cdg`).
+
 
 ## Installation
 
@@ -68,6 +71,7 @@ Run the compiled binary using `cargo run`.
 | | `--drop-weekends` | Drop weekend data points instead of forward-filling traditional stock data | `false` |
 | | `--db-path` | SQLite cache database file path | `cdg_files/cache.db` |
 | `-o` | `--output-prefix` | Output file path prefix | `cdg_files/output` |
+| | `--seed` | Optional RNG seed for deterministic Monte Carlo simulation | `None` |
 
 ---
 
@@ -116,6 +120,15 @@ For all coin-currency combinations, the library calculates high-performance tech
   - **Stochastic Oscillator**: 14-period `%K` and 3-period `%D` lines.
   - **ADX (Average Directional Index)**: 14-period Welles Wilder smoothed index showing trend strength.
   - **OBV (On-Balance Volume)**: Running volume total relative to price direction.
+
+### 5. Portfolio Optimization & Markowitz Monte Carlo
+
+When there are at least two assets to compare, the program automatically runs a Monte Carlo simulation of 10,000 random portfolios:
+- **Expected Return and Volatility**: Calculations are annualized (using a standard 365-day year assumption for cryptocurrency assets).
+- **Optimization Outputs**:
+  - **Max Sharpe Ratio**: The portfolio maximizing expected excess returns per unit of volatility (assuming risk-free rate = 0).
+  - **Minimum Volatility**: The portfolio with the absolute lowest risk.
+- **Repeatability**: Use the `--seed <value>` flag to generate identical portfolio random allocations across runs (default: 1337).
 
 ---
 
