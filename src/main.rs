@@ -47,7 +47,12 @@ async fn main() -> Result<()> {
         args.days = "30".to_string();
     }
 
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let run_dir = format!("cdg_files/run_{}", timestamp);
+    std::fs::create_dir_all(&run_dir)?;
+
     println!("Starting CDG Data Collector...");
+    println!("Run Directory: {}", run_dir);
     println!("Target Coin: {}", args.coin);
     println!("Currency: {}", args.currency);
     println!("Days: {}", args.days);
@@ -176,8 +181,8 @@ async fn main() -> Result<()> {
     }
 
     // 10. Export datasets
-    let csv_path = format!("{}_data.csv", args.output_prefix);
-    let parquet_path = format!("{}_data.parquet", args.output_prefix);
+    let csv_path = format!("{}/data.csv", run_dir);
+    let parquet_path = format!("{}/data.parquet", run_dir);
 
     println!("Saving CSV to: {}", csv_path);
     export::export_csv(&mut final_df, &csv_path)?;
@@ -193,7 +198,7 @@ async fn main() -> Result<()> {
                 format!("{}_log_return", col),
             ];
             let returns_cols_refs: Vec<&str> = returns_cols.iter().map(|s| s.as_str()).collect();
-            let returns_plot_path = format!("{}_{}_returns.png", args.output_prefix, col);
+            let returns_plot_path = format!("{}/{}_returns.png", run_dir, col);
             println!("Saving returns plot for {} to: {}", col, returns_plot_path);
             if let Err(e) = plot::plot_line_chart(
                 &final_df,
@@ -208,19 +213,96 @@ async fn main() -> Result<()> {
             }
         }
 
-        let perf_plot_path = format!("{}_performance.png", args.output_prefix);
+        let perf_plot_path = format!("{}/performance.png", run_dir);
         println!("Saving performance plot to: {}", perf_plot_path);
         if let Err(e) = plot::plot_performance(&final_df, &assets_to_plot, &perf_plot_path) {
             println!("Warning: Failed to generate performance plot: {}", e);
         }
 
-        let rr_plot_path = format!("{}_risk_return.png", args.output_prefix);
+        let rr_plot_path = format!("{}/risk_return.png", run_dir);
         println!("Saving risk/return plot to: {}", rr_plot_path);
         if let Err(e) = plot::plot_risk_return(&final_df, &assets_to_plot, &rr_plot_path) {
             println!("Warning: Failed to generate risk/return plot: {}", e);
         }
     } else {
         println!("Lightweight mode enabled: skipping plot generation.");
+    }
+
+    // 12. Portfolio Optimization (Markowitz Monte Carlo)
+    if assets_to_plot.len() >= 2 {
+        println!("\n==================================================");
+        println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
+        println!("==================================================");
+        match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, 10000) {
+            Ok(opt_res) => {
+                println!("\nOptimal Portfolio Formulations (Annualized):");
+                println!("--------------------------------------------------");
+                println!("Metric             | Max Sharpe Ratio | Min Volatility");
+                println!("--------------------------------------------------");
+                println!(
+                    "Expected Return    | {:>15.2}% | {:>13.2}%",
+                    opt_res.max_sharpe.annualized_return,
+                    opt_res.min_volatility.annualized_return
+                );
+                println!(
+                    "Volatility (Risk)  | {:>15.2}% | {:>13.2}%",
+                    opt_res.max_sharpe.annualized_volatility,
+                    opt_res.min_volatility.annualized_volatility
+                );
+                println!(
+                    "Sharpe Ratio       | {:>15.2}  | {:>13.2}",
+                    opt_res.max_sharpe.sharpe_ratio,
+                    opt_res.min_volatility.sharpe_ratio
+                );
+                println!("--------------------------------------------------");
+                println!("\nOptimal Asset Weights:");
+                println!("--------------------------------------------------");
+                println!("{:<18} | {:>16} | {:>14}", "Asset", "Max Sharpe Weight", "Min Vol Weight");
+                println!("--------------------------------------------------");
+                for (i, asset) in assets_to_plot.iter().enumerate() {
+                    println!(
+                        "{:<18} | {:>15.2}% | {:>13.2}%",
+                        asset,
+                        opt_res.max_sharpe.weights[i] * 100.0,
+                        opt_res.min_volatility.weights[i] * 100.0
+                    );
+                }
+                println!("--------------------------------------------------");
+
+                // Save weights CSV
+                let weights_path = format!("{}/portfolio_weights.csv", run_dir);
+                let mut w_file = std::fs::File::create(&weights_path)?;
+                use std::io::Write;
+                writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
+                for (i, asset) in assets_to_plot.iter().enumerate() {
+                    writeln!(
+                        w_file,
+                        "{},{:.6},{:.6}",
+                        asset,
+                        opt_res.max_sharpe.weights[i],
+                        opt_res.min_volatility.weights[i]
+                    )?;
+                }
+                println!("Portfolio weights saved to: {}", weights_path);
+
+                // Plot efficient frontier
+                let ef_plot_path = format!("{}/efficient_frontier.png", run_dir);
+                println!("Saving efficient frontier plot to: {}", ef_plot_path);
+                if let Err(e) = plot::plot_efficient_frontier(
+                    &opt_res.simulated_points,
+                    &opt_res.max_sharpe,
+                    &opt_res.min_volatility,
+                    &ef_plot_path,
+                ) {
+                    println!("Warning: Failed to generate efficient frontier plot: {}", e);
+                }
+            }
+            Err(e) => {
+                println!("Error running portfolio optimization: {}", e);
+            }
+        }
+    } else {
+        println!("\nSkipping portfolio optimization (requires at least 2 assets).");
     }
 
     println!("CDG data pipeline completed successfully!");

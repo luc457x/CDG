@@ -2,6 +2,42 @@ use anyhow::{anyhow, Result};
 use plotters::prelude::*;
 use polars::prelude::*;
 use std::path::Path;
+use crate::optimization::Portfolio;
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r_p, g_p, b_p) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    (
+        ((r_p + m) * 255.0).round() as u8,
+        ((g_p + m) * 255.0).round() as u8,
+        ((b_p + m) * 255.0).round() as u8,
+    )
+}
+
+pub fn get_distinct_color(i: usize, total: usize) -> RGBColor {
+    if total == 0 {
+        return RGBColor(0, 0, 0);
+    }
+    let h = (i as f64) * (360.0 / total as f64);
+    let s = 0.8;
+    let l = if i % 2 == 0 { 0.45 } else { 0.60 };
+    let (r, g, b) = hsl_to_rgb(h, s, l);
+    RGBColor(r, g, b)
+}
 
 pub fn plot_line_chart(
     df: &DataFrame,
@@ -67,12 +103,10 @@ pub fn plot_line_chart(
         })
         .draw()?;
 
-    let colors = [&RED, &BLUE, &GREEN, &MAGENTA, &CYAN, &BLACK];
-
     for (i, &col_name) in columns.iter().enumerate() {
         let series = df.column(col_name)?;
         let values: Vec<Option<f64>> = series.f64()?.into_iter().collect();
-        let color = colors[i % colors.len()];
+        let color = get_distinct_color(i, columns.len());
 
         chart
             .draw_series(LineSeries::new(
@@ -237,10 +271,8 @@ pub fn plot_risk_return(df: &DataFrame, assets: &[String], output_path: &str) ->
         .y_desc("Return (Mean %)")
         .draw()?;
 
-    let colors = [&RED, &BLUE, &GREEN, &MAGENTA, &CYAN, &BLACK];
-
     for (i, (name, risk, ret)) in stats.iter().enumerate() {
-        let color = colors[i % colors.len()];
+        let color = get_distinct_color(i, stats.len());
         chart
             .draw_series(std::iter::once(Circle::new(
                 (*risk, *ret),
@@ -250,6 +282,95 @@ pub fn plot_risk_return(df: &DataFrame, assets: &[String], output_path: &str) ->
             .label(name)
             .legend(move |(x, y)| Circle::new((x + 10, y), 5, color.filled()));
     }
+
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()?;
+
+    Ok(())
+}
+
+pub fn plot_efficient_frontier(
+    simulated_points: &[(f64, f64, f64)],
+    max_sharpe: &Portfolio,
+    min_vol: &Portfolio,
+    output_path: &str,
+) -> Result<()> {
+    if let Some(parent) = Path::new(output_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if simulated_points.is_empty() {
+        return Err(anyhow!("No simulated points to plot"));
+    }
+
+    let mut x_min = f64::INFINITY;
+    let mut x_max = f64::NEG_INFINITY;
+    let mut y_min = f64::INFINITY;
+    let mut y_max = f64::NEG_INFINITY;
+
+    for &(vol, ret, _) in simulated_points {
+        if vol < x_min { x_min = vol; }
+        if vol > x_max { x_max = vol; }
+        if ret < y_min { y_min = ret; }
+        if ret > y_max { y_max = ret; }
+    }
+
+    let x_pad = if x_max != x_min { (x_max - x_min) * 0.1 } else { 1.0 };
+    let y_pad = if y_max != y_min { (y_max - y_min) * 0.1 } else { 1.0 };
+
+    let root = BitMapBackend::new(output_path, (1024, 768)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Efficient Frontier & Portfolio Optimization", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(50)
+        .build_cartesian_2d(
+            (x_min - x_pad)..(x_max + x_pad),
+            (y_min - y_pad)..(y_max + y_pad),
+        )?;
+
+    chart
+        .configure_mesh()
+        .x_desc("Annualized Volatility (%)")
+        .y_desc("Annualized Expected Return (%)")
+        .draw()?;
+
+    // Draw simulated portfolios as small dots
+    let simulated_color = RGBColor(180, 190, 200).mix(0.5);
+    chart.draw_series(
+        simulated_points
+            .iter()
+            .map(|&(vol, ret, _)| Circle::new((vol, ret), 2, simulated_color.filled()))
+    )?;
+
+    // Draw Min Volatility Portfolio (Green)
+    let min_vol_color = GREEN;
+    chart.draw_series(std::iter::once(
+        Circle::new(
+            (min_vol.annualized_volatility, min_vol.annualized_return),
+            8,
+            min_vol_color.filled(),
+        )
+    ))?
+    .label("Minimum Volatility Portfolio")
+    .legend(move |(x, y)| Circle::new((x + 10, y), 5, min_vol_color.filled()));
+
+    // Draw Max Sharpe Portfolio (Red)
+    let max_sharpe_color = RED;
+    chart.draw_series(std::iter::once(
+        Circle::new(
+            (max_sharpe.annualized_volatility, max_sharpe.annualized_return),
+            8,
+            max_sharpe_color.filled(),
+        )
+    ))?
+    .label("Maximum Sharpe Ratio Portfolio")
+    .legend(move |(x, y)| Circle::new((x + 10, y), 5, max_sharpe_color.filled()));
 
     chart
         .configure_series_labels()

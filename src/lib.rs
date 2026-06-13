@@ -3,3 +3,4 @@ pub mod api;
 pub mod cache;
 pub mod export;
 pub mod plot;
+pub mod optimization;
