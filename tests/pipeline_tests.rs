@@ -1,5 +1,5 @@
-use cdg::plot::get_distinct_color;
 use cdg::optimization::run_monte_carlo;
+use cdg::plot::get_distinct_color;
 use polars::prelude::*;
 
 #[test]
@@ -15,7 +15,10 @@ fn test_color_distinctness() {
 #[test]
 fn test_optimization_integration() {
     let mut df = DataFrame::new(vec![
-        Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+        Series::new(
+            "date",
+            vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"],
+        ),
         Series::new("BTC", vec![60000.0, 61000.0, 59000.0, 62000.0]),
         Series::new("ETH", vec![3000.0, 3100.0, 2950.0, 3150.0]),
     ])

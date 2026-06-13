@@ -175,6 +175,19 @@ impl CoinGeckoClient {
         Ok(serde_json::from_str(&res)?)
     }
 
+    pub async fn get_coin_tickers(&self, coin_id: &str, page: Option<u32>) -> Result<Value> {
+        let endpoint = format!("/coins/{}/tickers", coin_id);
+        let page_str;
+        let query = if let Some(p) = page {
+            page_str = p.to_string();
+            vec![("page", page_str.as_str())]
+        } else {
+            vec![]
+        };
+        let res = self.get_request(&endpoint, &query, true).await?;
+        Ok(serde_json::from_str(&res)?)
+    }
+
     pub async fn get_search_trending(&self) -> Result<Value> {
         let res = self.get_request("/search/trending", &[], true).await?;
         Ok(serde_json::from_str(&res)?)

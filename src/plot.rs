@@ -1,8 +1,8 @@
+use crate::optimization::Portfolio;
 use anyhow::{anyhow, Result};
 use plotters::prelude::*;
 use polars::prelude::*;
 use std::path::Path;
-use crate::optimization::Portfolio;
 
 fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
@@ -34,7 +34,7 @@ pub fn get_distinct_color(i: usize, total: usize) -> RGBColor {
     }
     let h = (i as f64) * (360.0 / total as f64);
     let s = 0.8;
-    let l = if i % 2 == 0 { 0.45 } else { 0.60 };
+    let l = if i.is_multiple_of(2) { 0.45 } else { 0.60 };
     let (r, g, b) = hsl_to_rgb(h, s, l);
     RGBColor(r, g, b)
 }
@@ -312,20 +312,39 @@ pub fn plot_efficient_frontier(
     let mut y_max = f64::NEG_INFINITY;
 
     for &(vol, ret, _) in simulated_points {
-        if vol < x_min { x_min = vol; }
-        if vol > x_max { x_max = vol; }
-        if ret < y_min { y_min = ret; }
-        if ret > y_max { y_max = ret; }
+        if vol < x_min {
+            x_min = vol;
+        }
+        if vol > x_max {
+            x_max = vol;
+        }
+        if ret < y_min {
+            y_min = ret;
+        }
+        if ret > y_max {
+            y_max = ret;
+        }
     }
 
-    let x_pad = if x_max != x_min { (x_max - x_min) * 0.1 } else { 1.0 };
-    let y_pad = if y_max != y_min { (y_max - y_min) * 0.1 } else { 1.0 };
+    let x_pad = if x_max != x_min {
+        (x_max - x_min) * 0.1
+    } else {
+        1.0
+    };
+    let y_pad = if y_max != y_min {
+        (y_max - y_min) * 0.1
+    } else {
+        1.0
+    };
 
     let root = BitMapBackend::new(output_path, (1024, 768)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption("Efficient Frontier & Portfolio Optimization", ("sans-serif", 30).into_font())
+        .caption(
+            "Efficient Frontier & Portfolio Optimization",
+            ("sans-serif", 30).into_font(),
+        )
         .margin(10)
         .x_label_area_size(40)
         .y_label_area_size(50)
@@ -345,32 +364,33 @@ pub fn plot_efficient_frontier(
     chart.draw_series(
         simulated_points
             .iter()
-            .map(|&(vol, ret, _)| Circle::new((vol, ret), 2, simulated_color.filled()))
+            .map(|&(vol, ret, _)| Circle::new((vol, ret), 2, simulated_color.filled())),
     )?;
 
     // Draw Min Volatility Portfolio (Green)
     let min_vol_color = GREEN;
-    chart.draw_series(std::iter::once(
-        Circle::new(
+    chart
+        .draw_series(std::iter::once(Circle::new(
             (min_vol.annualized_volatility, min_vol.annualized_return),
             8,
             min_vol_color.filled(),
-        )
-    ))?
-    .label("Minimum Volatility Portfolio")
-    .legend(move |(x, y)| Circle::new((x + 10, y), 5, min_vol_color.filled()));
+        )))?
+        .label("Minimum Volatility Portfolio")
+        .legend(move |(x, y)| Circle::new((x + 10, y), 5, min_vol_color.filled()));
 
     // Draw Max Sharpe Portfolio (Red)
     let max_sharpe_color = RED;
-    chart.draw_series(std::iter::once(
-        Circle::new(
-            (max_sharpe.annualized_volatility, max_sharpe.annualized_return),
+    chart
+        .draw_series(std::iter::once(Circle::new(
+            (
+                max_sharpe.annualized_volatility,
+                max_sharpe.annualized_return,
+            ),
             8,
             max_sharpe_color.filled(),
-        )
-    ))?
-    .label("Maximum Sharpe Ratio Portfolio")
-    .legend(move |(x, y)| Circle::new((x + 10, y), 5, max_sharpe_color.filled()));
+        )))?
+        .label("Maximum Sharpe Ratio Portfolio")
+        .legend(move |(x, y)| Circle::new((x + 10, y), 5, max_sharpe_color.filled()));
 
     chart
         .configure_series_labels()

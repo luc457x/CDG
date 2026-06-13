@@ -1,6 +1,7 @@
 use anyhow::Result;
 use cdg::{analysis, api, cache, export, plot};
 use clap::Parser;
+use std::io::Write;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -104,15 +105,64 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!("No currencies specified"));
     }
 
+    // Fetch and display current orderbook metrics for coins
+    println!("\nFetching exchange tickers & orderbook metrics...");
+    for &coin in &coins {
+        match cg_client.get_coin_tickers(coin, Some(1)).await {
+            Ok(tickers_val) => {
+                let tickers_json_str = serde_json::to_string(&tickers_val)?;
+                match analysis::parse_coingecko_tickers(&tickers_json_str) {
+                    Ok(tickers_df) => {
+                        if let Ok(metrics_df) = analysis::calculate_orderbook_metrics(&tickers_df) {
+                            let avg_spread = metrics_df
+                                .column("average_spread")?
+                                .f64()?
+                                .get(0)
+                                .unwrap_or(0.0);
+                            let total_vol = metrics_df
+                                .column("total_volume")?
+                                .f64()?
+                                .get(0)
+                                .unwrap_or(0.0);
+                            let std_dev = metrics_df
+                                .column("price_std_dev")?
+                                .f64()?
+                                .get(0)
+                                .unwrap_or(0.0);
+                            println!("--------------------------------------------------");
+                            println!("Orderbook Metrics for {}:", coin.to_uppercase());
+                            println!("  Average Bid-Ask Spread : {:.4}%", avg_spread * 100.0);
+                            println!("  Total Ticker Volume     : {:.2}", total_vol);
+                            println!("  Price Std Dev (Exchanges): {:.2}", std_dev);
+                        }
+                    }
+                    Err(e) => println!("Warning: Failed to parse tickers for {}: {}", coin, e),
+                }
+            }
+            Err(e) => println!("Warning: Failed to fetch tickers for {}: {}", coin, e),
+        }
+    }
+    println!("--------------------------------------------------\n");
+
+    // Initialize progress bar for historical data fetching
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+
     let mut currency_dfs = Vec::new();
     let mut currency_cols = Vec::new();
 
     for &coin in &coins {
         for &curr in &currencies {
-            println!(
+            pb.set_message(format!(
                 "Fetching CoinGecko market chart for {} in {}...",
                 coin, curr
-            );
+            ));
             let cg_val = cg_client
                 .get_coin_market_chart_range(coin, curr, from_timestamp, to_timestamp)
                 .await?;
@@ -121,8 +171,27 @@ async fn main() -> Result<()> {
             let price_col_name = format!("{}_{}", coin, curr);
             currency_cols.push(price_col_name.clone());
 
-            let df = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
-            println!("Loaded {} rows for {} in {}", df.height(), coin, curr);
+            let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
+
+            pb.set_message(format!(
+                "Fetching CoinGecko OHLC for {} in {}...",
+                coin, curr
+            ));
+            let ohlc_val = cg_client.get_coin_ohlc(coin, curr, &args.days).await?;
+            let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
+            let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
+
+            pb.set_message(format!(
+                "Aligning market and OHLC data for {} in {}...",
+                coin, curr
+            ));
+            let df = analysis::align_datasets(&df_market, &[df_ohlc], false)?;
+            pb.set_message(format!(
+                "Loaded {} rows for {} in {}",
+                df.height(),
+                coin,
+                curr
+            ));
             currency_dfs.push(df);
         }
     }
@@ -140,31 +209,34 @@ async fn main() -> Result<()> {
     if !args.light {
         let bench_tickers = vec!["^GSPC", "^DJI", "^IXIC", "^HSI", "^BVSP"];
         for ticker in bench_tickers {
-            println!("Fetching Yahoo Finance data for {}...", ticker);
+            pb.set_message(format!("Fetching Yahoo Finance data for {}...", ticker));
             match yahoo_client
                 .fetch_ticker_chart(ticker, from_timestamp, to_timestamp)
                 .await
             {
                 Ok(json_data) => match analysis::parse_yahoo_json(&json_data, ticker) {
                     Ok(df) => {
-                        println!("Loaded {} rows for {}", df.height(), ticker);
+                        pb.set_message(format!("Loaded {} rows for {}", df.height(), ticker));
                         other_dfs.push(df);
                         assets_to_plot.push(ticker.to_string());
                     }
-                    Err(e) => println!("Error parsing JSON for {}: {}", ticker, e),
+                    Err(e) => pb.println(format!("Error parsing JSON for {}: {}", ticker, e)),
                 },
-                Err(e) => println!("Error fetching Yahoo Finance data for {}: {}", ticker, e),
+                Err(e) => pb.println(format!(
+                    "Error fetching Yahoo Finance data for {}: {}",
+                    ticker, e
+                )),
             }
         }
     }
 
     // 7. Align Datasets
-    println!("Aligning data...");
+    pb.set_message("Aligning data...");
     let aligned_df = analysis::align_datasets(&main_df, &other_dfs, args.drop_weekends)?;
-    println!("Aligned DataFrame shape: {:?}", aligned_df.shape());
+    pb.set_message(format!("Aligned DataFrame shape: {:?}", aligned_df.shape()));
 
     // 8. Compute indicators on target coins conditionally
-    println!("Computing technical indicators and returns...");
+    pb.set_message("Computing technical indicators and returns...");
     let mut final_df = aligned_df;
     if args.light {
         final_df = analysis::compute_returns_and_indicators(&final_df, &currency_cols[0])?;
@@ -176,7 +248,7 @@ async fn main() -> Result<()> {
 
     // 9. Prep ML features if flagged
     if args.prep_ml {
-        println!("Applying MinMax and Standard scaling for ML prep...");
+        pb.set_message("Applying MinMax and Standard scaling for ML prep...");
         final_df = analysis::prep_ml(&final_df)?;
     }
 
@@ -184,10 +256,10 @@ async fn main() -> Result<()> {
     let csv_path = format!("{}/data.csv", run_dir);
     let parquet_path = format!("{}/data.parquet", run_dir);
 
-    println!("Saving CSV to: {}", csv_path);
+    pb.set_message(format!("Saving CSV to: {}", csv_path));
     export::export_csv(&mut final_df, &csv_path)?;
 
-    println!("Saving Parquet to: {}", parquet_path);
+    pb.set_message(format!("Saving Parquet to: {}", parquet_path));
     export::export_parquet(&mut final_df, &parquet_path)?;
 
     // 11. Plotting
@@ -199,34 +271,45 @@ async fn main() -> Result<()> {
             ];
             let returns_cols_refs: Vec<&str> = returns_cols.iter().map(|s| s.as_str()).collect();
             let returns_plot_path = format!("{}/{}_returns.png", run_dir, col);
-            println!("Saving returns plot for {} to: {}", col, returns_plot_path);
+            pb.set_message(format!(
+                "Saving returns plot for {} to: {}",
+                col, returns_plot_path
+            ));
             if let Err(e) = plot::plot_line_chart(
                 &final_df,
                 &returns_cols_refs,
                 &format!("{} Returns (%)", col),
                 &returns_plot_path,
             ) {
-                println!(
+                pb.println(format!(
                     "Warning: Failed to generate returns plot for {}: {}",
                     col, e
-                );
+                ));
             }
         }
 
         let perf_plot_path = format!("{}/performance.png", run_dir);
-        println!("Saving performance plot to: {}", perf_plot_path);
+        pb.set_message(format!("Saving performance plot to: {}", perf_plot_path));
         if let Err(e) = plot::plot_performance(&final_df, &assets_to_plot, &perf_plot_path) {
-            println!("Warning: Failed to generate performance plot: {}", e);
+            pb.println(format!(
+                "Warning: Failed to generate performance plot: {}",
+                e
+            ));
         }
 
         let rr_plot_path = format!("{}/risk_return.png", run_dir);
-        println!("Saving risk/return plot to: {}", rr_plot_path);
+        pb.set_message(format!("Saving risk/return plot to: {}", rr_plot_path));
         if let Err(e) = plot::plot_risk_return(&final_df, &assets_to_plot, &rr_plot_path) {
-            println!("Warning: Failed to generate risk/return plot: {}", e);
+            pb.println(format!(
+                "Warning: Failed to generate risk/return plot: {}",
+                e
+            ));
         }
     } else {
-        println!("Lightweight mode enabled: skipping plot generation.");
+        pb.println("Lightweight mode enabled: skipping plot generation.");
     }
+
+    pb.finish_with_message("Data fetching and processing complete.");
 
     // 12. Portfolio Optimization (Markowitz Monte Carlo)
     if assets_to_plot.len() >= 2 {
@@ -236,51 +319,23 @@ async fn main() -> Result<()> {
         match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, 10000) {
             Ok(opt_res) => {
                 println!("\nOptimal Portfolio Formulations (Annualized):");
-                println!("--------------------------------------------------");
-                println!("Metric             | Max Sharpe Ratio | Min Volatility");
-                println!("--------------------------------------------------");
-                println!(
-                    "Expected Return    | {:>15.2}% | {:>13.2}%",
-                    opt_res.max_sharpe.annualized_return,
-                    opt_res.min_volatility.annualized_return
-                );
-                println!(
-                    "Volatility (Risk)  | {:>15.2}% | {:>13.2}%",
-                    opt_res.max_sharpe.annualized_volatility,
-                    opt_res.min_volatility.annualized_volatility
-                );
-                println!(
-                    "Sharpe Ratio       | {:>15.2}  | {:>13.2}",
-                    opt_res.max_sharpe.sharpe_ratio,
-                    opt_res.min_volatility.sharpe_ratio
-                );
-                println!("--------------------------------------------------");
+                let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
+                println!("{}", metrics_table);
+
                 println!("\nOptimal Asset Weights:");
-                println!("--------------------------------------------------");
-                println!("{:<18} | {:>16} | {:>14}", "Asset", "Max Sharpe Weight", "Min Vol Weight");
-                println!("--------------------------------------------------");
-                for (i, asset) in assets_to_plot.iter().enumerate() {
-                    println!(
-                        "{:<18} | {:>15.2}% | {:>13.2}%",
-                        asset,
-                        opt_res.max_sharpe.weights[i] * 100.0,
-                        opt_res.min_volatility.weights[i] * 100.0
-                    );
-                }
-                println!("--------------------------------------------------");
+                let weights_table =
+                    cdg::optimization::format_optimal_weights_table(&assets_to_plot, &opt_res);
+                println!("{}", weights_table);
 
                 // Save weights CSV
                 let weights_path = format!("{}/portfolio_weights.csv", run_dir);
                 let mut w_file = std::fs::File::create(&weights_path)?;
-                use std::io::Write;
                 writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
                 for (i, asset) in assets_to_plot.iter().enumerate() {
                     writeln!(
                         w_file,
                         "{},{:.6},{:.6}",
-                        asset,
-                        opt_res.max_sharpe.weights[i],
-                        opt_res.min_volatility.weights[i]
+                        asset, opt_res.max_sharpe.weights[i], opt_res.min_volatility.weights[i]
                     )?;
                 }
                 println!("Portfolio weights saved to: {}", weights_path);

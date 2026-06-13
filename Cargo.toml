@@ -14,6 +14,8 @@ plotters = "0.3"
 clap = { version = "4.4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
+indicatif = "0.17"
+cli-table = "0.4"
 
 [profile.dev]
 codegen-units = 1

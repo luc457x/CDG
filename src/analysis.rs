@@ -5,34 +5,197 @@ use polars::prelude::*;
 #[derive(serde::Deserialize)]
 struct MarketChart {
     prices: Vec<(i64, f64)>,
+    total_volumes: Option<Vec<(i64, f64)>>,
 }
 
 pub fn parse_coingecko_market_chart(json_str: &str, price_col_name: &str) -> Result<DataFrame> {
     let chart: MarketChart = serde_json::from_str(json_str)?;
     let mut dates = Vec::with_capacity(chart.prices.len());
     let mut values = Vec::with_capacity(chart.prices.len());
+    let mut volumes = Vec::with_capacity(chart.prices.len());
 
-    for (ts, val) in chart.prices {
+    let total_volumes = chart.total_volumes.unwrap_or_default();
+
+    for (i, (ts, val)) in chart.prices.iter().enumerate() {
         let datetime = Utc
-            .timestamp_millis_opt(ts)
+            .timestamp_millis_opt(*ts)
             .single()
             .ok_or_else(|| anyhow!("Invalid timestamp: {}", ts))?;
         dates.push(datetime.format("%Y-%m-%d").to_string());
-        values.push(val);
+        values.push(*val);
+
+        let vol = if i < total_volumes.len() {
+            total_volumes[i].1
+        } else {
+            0.0
+        };
+        volumes.push(vol);
     }
 
     let df = DataFrame::new(vec![
         Series::new("date", dates),
         Series::new(price_col_name, values),
+        Series::new(&format!("{}_volume", price_col_name), volumes),
     ])?;
 
     // Group by date and take mean to aggregate to daily
     let df = df
         .lazy()
         .group_by([col("date")])
-        .agg([col(price_col_name).mean()])
+        .agg([
+            col(price_col_name).mean(),
+            col(&format!("{}_volume", price_col_name)).mean(),
+        ])
         .sort("date", SortOptions::default())
         .collect()?;
+
+    Ok(df)
+}
+
+pub fn parse_coingecko_ohlc(json_str: &str, prefix: &str) -> Result<DataFrame> {
+    let ohlc: Vec<Vec<f64>> = serde_json::from_str(json_str)?;
+    let mut dates = Vec::with_capacity(ohlc.len());
+    let mut opens = Vec::with_capacity(ohlc.len());
+    let mut highs = Vec::with_capacity(ohlc.len());
+    let mut lows = Vec::with_capacity(ohlc.len());
+    let mut closes = Vec::with_capacity(ohlc.len());
+
+    for item in ohlc {
+        if item.len() >= 5 {
+            let ts = item[0] as i64;
+            let datetime = Utc
+                .timestamp_millis_opt(ts)
+                .single()
+                .ok_or_else(|| anyhow!("Invalid timestamp: {}", ts))?;
+            dates.push(datetime.format("%Y-%m-%d").to_string());
+            opens.push(item[1]);
+            highs.push(item[2]);
+            lows.push(item[3]);
+            closes.push(item[4]);
+        }
+    }
+
+    let df = DataFrame::new(vec![
+        Series::new("date", dates),
+        Series::new(&format!("{}_open", prefix), opens),
+        Series::new(&format!("{}_high", prefix), highs),
+        Series::new(&format!("{}_low", prefix), lows),
+        Series::new(&format!("{}_close", prefix), closes),
+    ])?;
+
+    // Group by date and aggregate: open -> mean, high -> max, low -> min, close -> mean
+    let df = df
+        .lazy()
+        .group_by([col("date")])
+        .agg([
+            col(&format!("{}_open", prefix)).mean(),
+            col(&format!("{}_high", prefix)).max(),
+            col(&format!("{}_low", prefix)).min(),
+            col(&format!("{}_close", prefix)).mean(),
+        ])
+        .sort("date", SortOptions::default())
+        .collect()?;
+
+    Ok(df)
+}
+
+#[derive(serde::Deserialize)]
+struct TickersResponse {
+    tickers: Vec<TickerItem>,
+}
+
+#[derive(serde::Deserialize)]
+struct TickerItem {
+    base: String,
+    target: String,
+    market: TickerMarket,
+    last: Option<f64>,
+    volume: Option<f64>,
+    bid_ask_spread_percentage: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+struct TickerMarket {
+    name: String,
+}
+
+pub fn parse_coingecko_tickers(json_str: &str) -> Result<DataFrame> {
+    let resp: TickersResponse = serde_json::from_str(json_str)?;
+    let mut exchanges = Vec::with_capacity(resp.tickers.len());
+    let mut bases = Vec::with_capacity(resp.tickers.len());
+    let mut targets = Vec::with_capacity(resp.tickers.len());
+    let mut last_prices = Vec::with_capacity(resp.tickers.len());
+    let mut volumes = Vec::with_capacity(resp.tickers.len());
+    let mut spreads = Vec::with_capacity(resp.tickers.len());
+
+    for ticker in resp.tickers {
+        exchanges.push(ticker.market.name);
+        bases.push(ticker.base);
+        targets.push(ticker.target);
+        last_prices.push(ticker.last.unwrap_or(0.0));
+        volumes.push(ticker.volume.unwrap_or(0.0));
+        spreads.push(ticker.bid_ask_spread_percentage.unwrap_or(0.0));
+    }
+
+    let df = DataFrame::new(vec![
+        Series::new("exchange", exchanges),
+        Series::new("base", bases),
+        Series::new("target", targets),
+        Series::new("last_price", last_prices),
+        Series::new("volume", volumes),
+        Series::new("bid_ask_spread_percentage", spreads),
+    ])?;
+
+    Ok(df)
+}
+
+pub fn calculate_orderbook_metrics(tickers_df: &DataFrame) -> Result<DataFrame> {
+    let spread_col = tickers_df.column("bid_ask_spread_percentage")?;
+    let volume_col = tickers_df.column("volume")?;
+    let last_price_col = tickers_df.column("last_price")?;
+
+    let spreads: Vec<f64> = spread_col
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(0.0))
+        .collect();
+    let volumes: Vec<f64> = volume_col
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(0.0))
+        .collect();
+    let last_prices: Vec<f64> = last_price_col
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(0.0))
+        .collect();
+
+    let n = spreads.len();
+    if n == 0 {
+        return Err(anyhow!("Empty tickers dataframe for orderbook metrics"));
+    }
+
+    let avg_spread = spreads.iter().sum::<f64>() / n as f64;
+    let total_vol = volumes.iter().sum::<f64>();
+
+    let mean_price = last_prices.iter().sum::<f64>() / n as f64;
+    let variance = if n > 1 {
+        last_prices
+            .iter()
+            .map(|&x| (x - mean_price).powi(2))
+            .sum::<f64>()
+            / (n - 1) as f64
+    } else {
+        0.0
+    };
+    let std_dev = variance.sqrt();
+
+    let df = DataFrame::new(vec![
+        Series::new("average_spread", vec![avg_spread]),
+        Series::new("total_volume", vec![total_vol]),
+        Series::new("price_variance", vec![variance]),
+        Series::new("price_std_dev", vec![std_dev]),
+    ])?;
 
     Ok(df)
 }
@@ -313,6 +476,206 @@ fn calculate_bollinger_bands(
     (sma, upper, lower)
 }
 
+fn calculate_atr(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
+    let n = close.len();
+    let mut atr = vec![None; n];
+    if n < period {
+        return atr;
+    }
+
+    let mut tr = vec![0.0; n];
+    tr[0] = high[0] - low[0];
+    for i in 1..n {
+        let h_l = high[i] - low[i];
+        let h_pc = (high[i] - close[i - 1]).abs();
+        let l_pc = (low[i] - close[i - 1]).abs();
+        tr[i] = h_l.max(h_pc).max(l_pc);
+    }
+
+    // First ATR is the SMA of TR over the first period
+    let sum_tr: f64 = tr[0..period].iter().sum();
+    let mut current_atr = sum_tr / period as f64;
+    atr[period - 1] = Some(current_atr);
+
+    for i in period..n {
+        current_atr = (current_atr * (period - 1) as f64 + tr[i]) / period as f64;
+        atr[i] = Some(current_atr);
+    }
+
+    atr
+}
+
+#[allow(clippy::needless_range_loop)]
+fn calculate_stochastic(
+    high: &[f64],
+    low: &[f64],
+    close: &[f64],
+    period: usize,
+) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
+    let n = close.len();
+    let mut percent_k = vec![None; n];
+    let mut percent_d = vec![None; n];
+    if n < period {
+        return (percent_k, percent_d);
+    }
+
+    for i in (period - 1)..n {
+        let start = i + 1 - period;
+        let mut highest_high = high[start];
+        let mut lowest_low = low[start];
+        for j in start..=i {
+            if high[j] > highest_high {
+                highest_high = high[j];
+            }
+            if low[j] < lowest_low {
+                lowest_low = low[j];
+            }
+        }
+        let denominator = highest_high - lowest_low;
+        if denominator != 0.0 {
+            percent_k[i] = Some((close[i] - lowest_low) / denominator * 100.0);
+        } else {
+            percent_k[i] = Some(100.0);
+        }
+    }
+
+    // 3-period SMA of %K
+    for i in (period - 1 + 2)..n {
+        let mut sum = 0.0;
+        let mut count = 0;
+        for j in (i - 2)..=i {
+            if let Some(k_val) = percent_k[j] {
+                sum += k_val;
+                count += 1;
+            }
+        }
+        if count == 3 {
+            percent_d[i] = Some(sum / 3.0);
+        }
+    }
+
+    (percent_k, percent_d)
+}
+
+#[allow(clippy::needless_range_loop)]
+fn calculate_adx(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
+    let n = close.len();
+    let mut adx = vec![None; n];
+    if n < 2 * period {
+        return adx;
+    }
+
+    let mut tr = vec![0.0; n];
+    let mut dm_plus = vec![0.0; n];
+    let mut dm_minus = vec![0.0; n];
+
+    tr[0] = high[0] - low[0];
+    for i in 1..n {
+        let h_l = high[i] - low[i];
+        let h_pc = (high[i] - close[i - 1]).abs();
+        let l_pc = (low[i] - close[i - 1]).abs();
+        tr[i] = h_l.max(h_pc).max(l_pc);
+
+        let up_move = high[i] - high[i - 1];
+        let down_move = low[i - 1] - low[i];
+
+        if up_move > down_move && up_move > 0.0 {
+            dm_plus[i] = up_move;
+        } else {
+            dm_plus[i] = 0.0;
+        }
+
+        if down_move > up_move && down_move > 0.0 {
+            dm_minus[i] = down_move;
+        } else {
+            dm_minus[i] = 0.0;
+        }
+    }
+
+    let mut smoothed_tr = vec![0.0; n];
+    let mut smoothed_dm_plus = vec![0.0; n];
+    let mut smoothed_dm_minus = vec![0.0; n];
+
+    let sum_tr: f64 = tr[0..period].iter().sum();
+    let sum_dm_plus: f64 = dm_plus[0..period].iter().sum();
+    let sum_dm_minus: f64 = dm_minus[0..period].iter().sum();
+
+    smoothed_tr[period - 1] = sum_tr;
+    smoothed_dm_plus[period - 1] = sum_dm_plus;
+    smoothed_dm_minus[period - 1] = sum_dm_minus;
+
+    for i in period..n {
+        smoothed_tr[i] = smoothed_tr[i - 1] - (smoothed_tr[i - 1] / period as f64) + tr[i];
+        smoothed_dm_plus[i] =
+            smoothed_dm_plus[i - 1] - (smoothed_dm_plus[i - 1] / period as f64) + dm_plus[i];
+        smoothed_dm_minus[i] =
+            smoothed_dm_minus[i - 1] - (smoothed_dm_minus[i - 1] / period as f64) + dm_minus[i];
+    }
+
+    let mut dx = vec![None; n];
+    for i in (period - 1)..n {
+        let tr_val = smoothed_tr[i];
+        if tr_val > 0.0 {
+            let di_plus = (smoothed_dm_plus[i] / tr_val) * 100.0;
+            let di_minus = (smoothed_dm_minus[i] / tr_val) * 100.0;
+            let diff = (di_plus - di_minus).abs();
+            let sum = di_plus + di_minus;
+            if sum > 0.0 {
+                dx[i] = Some((diff / sum) * 100.0);
+            } else {
+                dx[i] = Some(0.0);
+            }
+        } else {
+            dx[i] = Some(0.0);
+        }
+    }
+
+    let mut dx_valid = Vec::new();
+    for i in (period - 1)..n {
+        if let Some(val) = dx[i] {
+            dx_valid.push((i, val));
+        }
+    }
+
+    if dx_valid.len() >= period {
+        let mut sum_dx = 0.0;
+        for j in 0..period {
+            sum_dx += dx_valid[j].1;
+        }
+        let mut current_adx = sum_dx / period as f64;
+        let first_adx_idx = dx_valid[period - 1].0;
+        adx[first_adx_idx] = Some(current_adx);
+
+        for j in period..dx_valid.len() {
+            let idx = dx_valid[j].0;
+            let val = dx_valid[j].1;
+            current_adx = (current_adx * (period - 1) as f64 + val) / period as f64;
+            adx[idx] = Some(current_adx);
+        }
+    }
+
+    adx
+}
+
+fn calculate_obv(close: &[f64], volume: &[f64]) -> Vec<Option<f64>> {
+    let n = close.len();
+    let mut obv = vec![None; n];
+    if n == 0 {
+        return obv;
+    }
+    let mut current_obv = volume[0];
+    obv[0] = Some(current_obv);
+    for i in 1..n {
+        if close[i] > close[i - 1] {
+            current_obv += volume[i];
+        } else if close[i] < close[i - 1] {
+            current_obv -= volume[i];
+        }
+        obv[i] = Some(current_obv);
+    }
+    obv
+}
+
 pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Result<DataFrame> {
     let prices_series = df.column(target_column)?;
     let prices: Vec<f64> = prices_series
@@ -380,6 +743,62 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
         out_df.width(),
         Series::new(&format!("{}_bollinger_lower", target_column), bb_lower),
     )?;
+
+    // Advanced technical indicators (ATR, Stochastic, ADX, OBV) if columns exist
+    let high_col = format!("{}_high", target_column);
+    let low_col = format!("{}_low", target_column);
+    let vol_col = format!("{}_volume", target_column);
+
+    if df.column(&high_col).is_ok() && df.column(&low_col).is_ok() {
+        let highs_series = df.column(&high_col)?;
+        let highs: Vec<f64> = highs_series
+            .f64()?
+            .into_iter()
+            .map(|opt| opt.unwrap_or(0.0))
+            .collect();
+        let lows_series = df.column(&low_col)?;
+        let lows: Vec<f64> = lows_series
+            .f64()?
+            .into_iter()
+            .map(|opt| opt.unwrap_or(0.0))
+            .collect();
+
+        let atr = calculate_atr(&highs, &lows, &prices, 14);
+        let (stoch_k, stoch_d) = calculate_stochastic(&highs, &lows, &prices, 14);
+        let adx = calculate_adx(&highs, &lows, &prices, 14);
+
+        out_df.insert_column(
+            out_df.width(),
+            Series::new(&format!("{}_atr_14", target_column), atr),
+        )?;
+        out_df.insert_column(
+            out_df.width(),
+            Series::new(&format!("{}_stoch_k_14", target_column), stoch_k),
+        )?;
+        out_df.insert_column(
+            out_df.width(),
+            Series::new(&format!("{}_stoch_d_3", target_column), stoch_d),
+        )?;
+        out_df.insert_column(
+            out_df.width(),
+            Series::new(&format!("{}_adx_14", target_column), adx),
+        )?;
+    }
+
+    if df.column(&vol_col).is_ok() {
+        let vols_series = df.column(&vol_col)?;
+        let vols: Vec<f64> = vols_series
+            .f64()?
+            .into_iter()
+            .map(|opt| opt.unwrap_or(0.0))
+            .collect();
+
+        let obv = calculate_obv(&prices, &vols);
+        out_df.insert_column(
+            out_df.width(),
+            Series::new(&format!("{}_obv", target_column), obv),
+        )?;
+    }
 
     Ok(out_df)
 }
@@ -620,5 +1039,125 @@ mod tests {
             aligned.column("bitcoin_eur").unwrap().f64().unwrap().get(0),
             Some(55000.0)
         );
+    }
+
+    #[test]
+    fn test_parse_coingecko_ohlc() {
+        let json_data = r#"[[1700000000000, 50000.0, 51000.0, 49000.0, 50500.0]]"#;
+        let df = parse_coingecko_ohlc(json_data, "bitcoin_usd").unwrap();
+        assert_eq!(df.height(), 1);
+        assert_eq!(
+            df.column("bitcoin_usd_open").unwrap().f64().unwrap().get(0),
+            Some(50000.0)
+        );
+        assert_eq!(
+            df.column("bitcoin_usd_high").unwrap().f64().unwrap().get(0),
+            Some(51000.0)
+        );
+        assert_eq!(
+            df.column("bitcoin_usd_low").unwrap().f64().unwrap().get(0),
+            Some(49000.0)
+        );
+        assert_eq!(
+            df.column("bitcoin_usd_close")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0),
+            Some(50500.0)
+        );
+    }
+
+    #[test]
+    fn test_parse_coingecko_tickers_and_orderbook() {
+        let json_data = r#"{
+            "name": "Bitcoin",
+            "tickers": [
+                {
+                    "base": "BTC",
+                    "target": "USD",
+                    "market": { "name": "Binance" },
+                    "last": 60000.0,
+                    "volume": 100.0,
+                    "bid_ask_spread_percentage": 0.02
+                },
+                {
+                    "base": "BTC",
+                    "target": "USD",
+                    "market": { "name": "Coinbase" },
+                    "last": 60200.0,
+                    "volume": 200.0,
+                    "bid_ask_spread_percentage": 0.04
+                }
+            ]
+        }"#;
+        let df = parse_coingecko_tickers(json_data).unwrap();
+        assert_eq!(df.height(), 2);
+        assert_eq!(
+            df.column("exchange").unwrap().str().unwrap().get(0),
+            Some("Binance")
+        );
+        assert_eq!(
+            df.column("exchange").unwrap().str().unwrap().get(1),
+            Some("Coinbase")
+        );
+
+        let metrics = calculate_orderbook_metrics(&df).unwrap();
+        assert_eq!(metrics.height(), 1);
+        assert!(
+            (metrics
+                .column("average_spread")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap()
+                - 0.03)
+                .abs()
+                < 1e-9
+        );
+        assert_eq!(
+            metrics
+                .column("total_volume")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0),
+            Some(300.0)
+        );
+        assert_eq!(
+            metrics
+                .column("price_variance")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0),
+            Some(20000.0)
+        );
+    }
+
+    #[test]
+    fn test_advanced_indicators_computation() {
+        let dates: Vec<String> = (0..35).map(|i| format!("2026-06-{:02}", i + 1)).collect();
+        let highs: Vec<f64> = (0..35).map(|i| 102.0 + i as f64).collect();
+        let lows: Vec<f64> = (0..35).map(|i| 98.0 + i as f64).collect();
+        let closes: Vec<f64> = (0..35).map(|i| 100.0 + i as f64).collect();
+        let volumes: Vec<f64> = (0..35).map(|i| 1000.0 + i as f64).collect();
+
+        let df = DataFrame::new(vec![
+            Series::new("date", dates),
+            Series::new("bitcoin_usd_high", highs),
+            Series::new("bitcoin_usd_low", lows),
+            Series::new("bitcoin_usd", closes),
+            Series::new("bitcoin_usd_volume", volumes),
+        ])
+        .unwrap();
+
+        let res = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+        assert!(res.column("bitcoin_usd_atr_14").is_ok());
+        assert!(res.column("bitcoin_usd_stoch_k_14").is_ok());
+        assert!(res.column("bitcoin_usd_stoch_d_3").is_ok());
+        assert!(res.column("bitcoin_usd_adx_14").is_ok());
+        assert!(res.column("bitcoin_usd_obv").is_ok());
     }
 }

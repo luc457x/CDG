@@ -41,6 +41,7 @@ impl Xorshift {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
@@ -117,7 +118,24 @@ pub fn run_monte_carlo(
     let mut simulated_points = Vec::with_capacity(num_simulations);
     let mut rng = Xorshift::new(1337); // Fixed seed for reproducibility
 
-    for _ in 0..num_simulations {
+    let pb = if cfg!(test) {
+        indicatif::ProgressBar::hidden()
+    } else {
+        let bar = indicatif::ProgressBar::new(num_simulations as u64);
+        bar.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        bar
+    };
+
+    for i in 0..num_simulations {
+        if i % 100 == 0 {
+            pb.set_position(i as u64);
+        }
+
         let mut weights = vec![0.0; m];
         let mut sum = 0.0;
         for j in 0..m {
@@ -146,7 +164,11 @@ pub fn run_monte_carlo(
         // Annualize (using 365 days)
         let ann_ret = p_ret * 365.0;
         let ann_vol = p_vol * 365.0f64.sqrt();
-        let sharpe = if ann_vol > 0.0 { ann_ret / ann_vol } else { 0.0 };
+        let sharpe = if ann_vol > 0.0 {
+            ann_ret / ann_vol
+        } else {
+            0.0
+        };
 
         // Convert return and vol to percentages for plotting & UI
         let ann_ret_pct = ann_ret * 100.0;
@@ -173,11 +195,89 @@ pub fn run_monte_carlo(
         }
     }
 
+    pb.finish_with_message("Simulation complete");
+
     Ok(OptimizationResult {
         max_sharpe: max_sharpe_portfolio,
         min_volatility: min_vol_portfolio,
         simulated_points,
     })
+}
+
+pub fn format_optimal_weights_table(assets: &[String], opt_res: &OptimizationResult) -> String {
+    use cli_table::{format::Justify, Cell, Style, Table};
+
+    let mut rows = Vec::new();
+    for (i, asset) in assets.iter().enumerate() {
+        rows.push(vec![
+            asset.clone().cell(),
+            format!("{:.2}%", opt_res.max_sharpe.weights[i] * 100.0)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}%", opt_res.min_volatility.weights[i] * 100.0)
+                .cell()
+                .justify(Justify::Right),
+        ]);
+    }
+
+    let table = rows.table().title(vec![
+        "Asset".cell().bold(true),
+        "Max Sharpe Weight"
+            .cell()
+            .bold(true)
+            .justify(Justify::Right),
+        "Min Vol Weight".cell().bold(true).justify(Justify::Right),
+    ]);
+
+    match table.display() {
+        Ok(d) => d.to_string(),
+        Err(_) => "Error displaying table".to_string(),
+    }
+}
+
+pub fn format_portfolio_metrics_table(opt_res: &OptimizationResult) -> String {
+    use cli_table::{format::Justify, Cell, Style, Table};
+
+    let table = vec![
+        vec![
+            "Expected Return".cell(),
+            format!("{:.2}%", opt_res.max_sharpe.annualized_return)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}%", opt_res.min_volatility.annualized_return)
+                .cell()
+                .justify(Justify::Right),
+        ],
+        vec![
+            "Volatility (Risk)".cell(),
+            format!("{:.2}%", opt_res.max_sharpe.annualized_volatility)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}%", opt_res.min_volatility.annualized_volatility)
+                .cell()
+                .justify(Justify::Right),
+        ],
+        vec![
+            "Sharpe Ratio".cell(),
+            format!("{:.2}", opt_res.max_sharpe.sharpe_ratio)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}", opt_res.min_volatility.sharpe_ratio)
+                .cell()
+                .justify(Justify::Right),
+        ],
+    ]
+    .table()
+    .title(vec![
+        "Metric".cell().bold(true),
+        "Max Sharpe Ratio".cell().bold(true).justify(Justify::Right),
+        "Min Volatility".cell().bold(true).justify(Justify::Right),
+    ]);
+
+    match table.display() {
+        Ok(d) => d.to_string(),
+        Err(_) => "Error displaying table".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +316,42 @@ mod tests {
         assert!((sum_min_vol - 1.0).abs() < 1e-9);
 
         // Volatility of minimum volatility portfolio must be <= max sharpe portfolio's volatility
-        assert!(result.min_volatility.annualized_volatility <= result.max_sharpe.annualized_volatility);
+        assert!(
+            result.min_volatility.annualized_volatility <= result.max_sharpe.annualized_volatility
+        );
+    }
+
+    #[test]
+    fn test_table_formatting() {
+        let opt_res = OptimizationResult {
+            max_sharpe: Portfolio {
+                weights: vec![0.6, 0.4],
+                annualized_return: 15.5,
+                annualized_volatility: 12.2,
+                sharpe_ratio: 1.27,
+            },
+            min_volatility: Portfolio {
+                weights: vec![0.3, 0.7],
+                annualized_return: 10.2,
+                annualized_volatility: 8.5,
+                sharpe_ratio: 1.20,
+            },
+            simulated_points: vec![],
+        };
+        let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
+
+        let weights_tbl = format_optimal_weights_table(&assets, &opt_res);
+        assert!(weights_tbl.contains("Asset"));
+        assert!(weights_tbl.contains("Max Sharpe Weight"));
+        assert!(weights_tbl.contains("Min Vol Weight"));
+        assert!(weights_tbl.contains("60.00%"));
+        assert!(weights_tbl.contains("70.00%"));
+
+        let metrics_tbl = format_portfolio_metrics_table(&opt_res);
+        assert!(metrics_tbl.contains("Metric"));
+        assert!(metrics_tbl.contains("Max Sharpe Ratio"));
+        assert!(metrics_tbl.contains("Min Volatility"));
+        assert!(metrics_tbl.contains("15.50%"));
+        assert!(metrics_tbl.contains("8.50%"));
     }
 }
