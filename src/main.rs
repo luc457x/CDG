@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Some(Commands::Ping) => {
-            let cache = cache::Cache::new(&args.db_path).await?;
+            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
             let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
             let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?;
 
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::ListCoins) => {
-            let cache = cache::Cache::new(&args.db_path).await?;
+            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
             let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
             println!("Fetching top 50 coins by market cap (USD)...");
             let coins = cg_client.get_coins_markets("usd", 50).await?;
@@ -163,7 +163,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::Trending) => {
-            let cache = cache::Cache::new(&args.db_path).await?;
+            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
             let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
             println!("Fetching trending coins...");
             let val = cg_client.get_search_trending().await?;
@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
             days,
             format,
         }) => {
-            let cache = cache::Cache::new(&args.db_path).await?;
+            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
             let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
             run_ohlcv_flow(
                 &cg_client,
@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Some(Commands::CheckCoin { coin }) => {
-            let cache = cache::Cache::new(&args.db_path).await?;
+            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
             let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
             println!("Checking CoinGecko ID for '{}'...", coin);
             match cg_client.check_coin_id(&coin).await {
@@ -279,7 +279,7 @@ async fn run_pipeline_flow(
 
     // 1. Initialize Cache
     println!("Initializing SQLite Cache...");
-    let cache = cache::Cache::new(db_path).await?;
+    let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
 
     // 2. Initialize Clients
     let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
@@ -717,7 +717,7 @@ fn wait_for_back() {
 }
 
 async fn run_interactive_menu(db_path: &str, output_prefix: &str) -> Result<()> {
-    let cache = cache::Cache::new(db_path).await?;
+    let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
     let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
     let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?;
 

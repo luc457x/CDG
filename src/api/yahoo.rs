@@ -1,16 +1,17 @@
-use crate::cache::Cache;
+use crate::cache::CacheBackend;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
+use std::sync::Arc;
 
 pub struct YahooClient {
     client: Client,
-    cache: Cache,
+    cache: Arc<dyn CacheBackend>,
     base_url: String,
     ttl_secs: i64,
 }
 
 impl YahooClient {
-    pub fn new(cache: Cache) -> Result<Self> {
+    pub fn new(cache: Arc<dyn CacheBackend>) -> Result<Self> {
         Ok(Self {
             client: Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")

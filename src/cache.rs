@@ -3,10 +3,28 @@ use chrono::Utc;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::path::Path;
 
+#[async_trait::async_trait]
+pub trait CacheBackend: Send + Sync {
+    async fn get(&self, url: &str, ttl_secs: i64) -> Result<Option<String>>;
+    async fn insert(&self, url: &str, body: &str) -> Result<()>;
+}
+
 #[derive(Clone)]
 pub struct Cache {
     pool: SqlitePool,
 }
+
+#[async_trait::async_trait]
+impl CacheBackend for Cache {
+    async fn get(&self, url: &str, ttl_secs: i64) -> Result<Option<String>> {
+        self.get_internal(url, ttl_secs).await
+    }
+
+    async fn insert(&self, url: &str, body: &str) -> Result<()> {
+        self.insert_internal(url, body).await
+    }
+}
+
 
 impl Cache {
     pub async fn new(db_path: &str) -> Result<Self> {
@@ -45,7 +63,7 @@ impl Cache {
         Ok(())
     }
 
-    pub async fn get(&self, url: &str, ttl_secs: i64) -> Result<Option<String>> {
+    pub async fn get_internal(&self, url: &str, ttl_secs: i64) -> Result<Option<String>> {
         let row: Option<(String, i64)> = sqlx::query_as(
             "SELECT response_body, cached_at_timestamp FROM api_cache WHERE url = ?",
         )
@@ -68,7 +86,7 @@ impl Cache {
         Ok(None)
     }
 
-    pub async fn insert(&self, url: &str, body: &str) -> Result<()> {
+    pub async fn insert_internal(&self, url: &str, body: &str) -> Result<()> {
         let now = Utc::now().timestamp();
         sqlx::query(
             "INSERT OR REPLACE INTO api_cache (url, response_body, cached_at_timestamp)

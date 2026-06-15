@@ -319,6 +319,7 @@ name = "cdg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
  "cli-table",
@@ -326,6 +327,7 @@ dependencies = [
  "indicatif",
  "plotters",
  "polars",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",

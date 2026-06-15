@@ -17,6 +17,8 @@ anyhow = "1.0"
 indicatif = "0.17"
 cli-table = "0.4"
 dialoguer = "0.11"
+rayon = "1.8"
+async-trait = "0.1"
 
 
 

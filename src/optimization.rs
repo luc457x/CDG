@@ -127,9 +127,6 @@ pub fn run_monte_carlo(
         sharpe_ratio: f64::NEG_INFINITY,
     };
 
-    let mut simulated_points = Vec::with_capacity(num_simulations);
-    let mut rng = Xorshift::new(seed.unwrap_or(1337));
-
     let pb = if cfg!(test) {
         indicatif::ProgressBar::hidden()
     } else {
@@ -143,49 +140,62 @@ pub fn run_monte_carlo(
         bar
     };
 
-    for i in 0..num_simulations {
-        if i % 100 == 0 {
-            pb.set_position(i as u64);
-        }
+    use rayon::prelude::*;
 
-        let mut weights = vec![0.0; m];
-        let mut sum = 0.0;
-        for j in 0..m {
-            weights[j] = rng.next_f64();
-            sum += weights[j];
-        }
-        for j in 0..m {
-            weights[j] /= sum;
-        }
+    let master_seed = seed.unwrap_or(1337);
 
-        // Daily portfolio expected return
-        let mut p_ret = 0.0;
-        for j in 0..m {
-            p_ret += weights[j] * mean_returns[j];
-        }
+    // Compute simulations in parallel using Rayon
+    let results: Vec<(Vec<f64>, f64, f64, f64)> = (0..num_simulations)
+        .into_par_iter()
+        .map(|i| {
+            // Seed uniquely and deterministically for each index i
+            let seed_i = master_seed.wrapping_add(i as u64 + 1);
+            let mut rng = Xorshift::new(seed_i);
 
-        // Daily portfolio variance
-        let mut p_var = 0.0;
-        for j in 0..m {
-            for k in 0..m {
-                p_var += weights[j] * weights[k] * cov_matrix[j][k];
+            let mut weights = vec![0.0; m];
+            let mut sum = 0.0;
+            for j in 0..m {
+                weights[j] = rng.next_f64();
+                sum += weights[j];
             }
-        }
-        let p_vol = p_var.sqrt();
+            for j in 0..m {
+                weights[j] /= sum;
+            }
 
-        // Annualize (using TRADING_DAYS_PER_YEAR)
-        let ann_ret = p_ret * TRADING_DAYS_PER_YEAR;
-        let ann_vol = p_vol * TRADING_DAYS_PER_YEAR.sqrt();
-        let sharpe = if ann_vol > 0.0 {
-            ann_ret / ann_vol
-        } else {
-            0.0
-        };
+            // Daily portfolio expected return
+            let mut p_ret = 0.0;
+            for j in 0..m {
+                p_ret += weights[j] * mean_returns[j];
+            }
 
-        // Convert return and vol to percentages for plotting & UI
-        let ann_ret_pct = ann_ret * 100.0;
-        let ann_vol_pct = ann_vol * 100.0;
+            // Daily portfolio variance
+            let mut p_var = 0.0;
+            for j in 0..m {
+                for k in 0..m {
+                    p_var += weights[j] * weights[k] * cov_matrix[j][k];
+                }
+            }
+            let p_vol = p_var.sqrt();
 
+            // Annualize (using TRADING_DAYS_PER_YEAR)
+            let ann_ret = p_ret * TRADING_DAYS_PER_YEAR;
+            let ann_vol = p_vol * TRADING_DAYS_PER_YEAR.sqrt();
+            let sharpe = if ann_vol > 0.0 {
+                ann_ret / ann_vol
+            } else {
+                0.0
+            };
+
+            // Convert return and vol to percentages for plotting & UI
+            let ann_ret_pct = ann_ret * 100.0;
+            let ann_vol_pct = ann_vol * 100.0;
+
+            (weights, ann_ret_pct, ann_vol_pct, sharpe)
+        })
+        .collect();
+
+    let mut simulated_points = Vec::with_capacity(num_simulations);
+    for (weights, ann_ret_pct, ann_vol_pct, sharpe) in results {
         simulated_points.push((ann_vol_pct, ann_ret_pct, sharpe));
 
         if sharpe > max_sharpe_portfolio.sharpe_ratio {
@@ -199,7 +209,7 @@ pub fn run_monte_carlo(
 
         if ann_vol_pct < min_vol_portfolio.annualized_volatility {
             min_vol_portfolio = Portfolio {
-                weights: weights.clone(),
+                weights: weights,
                 annualized_return: ann_ret_pct,
                 annualized_volatility: ann_vol_pct,
                 sharpe_ratio: sharpe,
@@ -207,6 +217,7 @@ pub fn run_monte_carlo(
         }
     }
 
+    pb.set_position(num_simulations as u64);
     pb.finish_with_message("Simulation complete");
 
     Ok(OptimizationResult {
