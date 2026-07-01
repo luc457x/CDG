@@ -25,7 +25,6 @@ impl CacheBackend for Cache {
     }
 }
 
-
 impl Cache {
     pub async fn new(db_path: &str) -> Result<Self> {
         // Ensure the directory exists

@@ -35,4 +35,4 @@ Four tenets ensure correctness, safety, token efficiency:
 
 ## Core Rules
 
-Strictly follow rules defined in [rules](.agents/rules/). 
+Strictly follow rules defined in [rules](.agents/rules/).
