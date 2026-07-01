@@ -100,6 +100,24 @@ impl Cache {
     }
 }
 
+pub async fn check_cache_hits(
+    cache: std::sync::Arc<dyn CacheBackend>,
+    urls: &[String],
+    ttl_secs: i64,
+) -> Result<(usize, usize)> {
+    let mut hits = 0;
+    let total = urls.len();
+    if total == 0 {
+        return Ok((0, 0));
+    }
+    for url in urls {
+        if cache.get(url, ttl_secs).await.ok().flatten().is_some() {
+            hits += 1;
+        }
+    }
+    Ok((hits, total))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +143,28 @@ mod tests {
         assert_eq!(val_expired, None);
 
         // Cleanup
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn test_check_cache_hits() {
+        let db_path = "tests/test_check_cache_hits.db";
+        let _ = std::fs::remove_file(db_path);
+
+        let cache = std::sync::Arc::new(Cache::new(db_path).await.unwrap());
+        cache.insert("http://test.com/1", "body1").await.unwrap();
+        cache.insert("http://test.com/2", "body2").await.unwrap();
+
+        let urls = vec![
+            "http://test.com/1".to_string(),
+            "http://test.com/2".to_string(),
+            "http://test.com/3".to_string(),
+        ];
+
+        let (hits, total) = check_cache_hits(cache.clone(), &urls, 10).await.unwrap();
+        assert_eq!(hits, 2);
+        assert_eq!(total, 3);
+
         let _ = std::fs::remove_file(db_path);
     }
 }
