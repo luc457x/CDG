@@ -1,0 +1,35 @@
+# AI Agent Ignore File
+
+# AI files
+.agents/PROGRESS_ARCHIVE.md
+
+# Build artifacts
+target/
+**/*.rs.bk
+
+# Cache and outputs (generated data)
+cdg_files/
+
+# Database files
+**/*.db
+**/*.db-journal
+**/*.db-shm
+**/*.db-wal
+
+# Environment files (sensitive)
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test artifacts
+tests/*.db
+tests/temp_*.parquet

@@ -1,18 +1,32 @@
-# Rust build target
+# Rust
 target/
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
+**/*.rs.bk
+
+# Cache and outputs
+cdg_files/
+**/*.db
+**/*.db-journal
+**/*.db-shm
+**/*.db-wal
 
 # AI Agent files
-AGENTS.md
-.agentignore
-.agents/
+# AGENTS.md
+# .agentignore
+# .agents/
+.kilo
+.gemini
+.claude
 
 # Python virtual env
 .venv/
 */.venv/
+venv/
+ENV/
+
+# Python cache/compiled
+__pycache__/
+*.py[cod]
+*$py.class
 
 # IDEs and editors
 .vscode/
@@ -34,15 +48,12 @@ desktop.ini
 .env.local
 .env.*.local
 
-# Project files
+# Project output files
 *.png
 *.xlsx
 *.csv
 *.sqlite
 *.txt
-**/__pycache__/
 **/files/
 **/.ipynb_checkpoints/
-**/venv/
-**/cdg_files/
 target_new/
