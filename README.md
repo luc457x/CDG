@@ -4,6 +4,16 @@ A robust, modular, and performance-efficient Rust application and library to col
 
 This project has been implemented in Rust, optimizing hosting footprint and data alignment speed while utilizing `polars` for fast DataFrames operations and `plotters` for generating charts.
 
+## 📖 Documentation
+
+A comprehensive set of modular guides is available under the `doc/` directory:
+- **[Overview & Documentation Hub](doc/README.md)**
+- **[System Architecture](doc/architecture.md)**
+- **[Setup & CLI Usage Guide](doc/installation_usage.md)**
+- **[API Clients & SQLite Caching](doc/api_cache.md)**
+- **[Feature Engineering & Portfolio Math](doc/analysis_optimization.md)**
+- **[Deployment & Cloud Operations](doc/deployment.md)**
+
 ## Features
 
 - **Multi-Source Fetching**: Queries CoinGecko API for cryptocurrency prices and scrapes Yahoo Finance API for traditional market benchmarks (like S&P 500).

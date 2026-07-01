@@ -2,12 +2,32 @@
 
 ## Status
 
-- State: AI engineering infrastructure fully synced with CDGonGCP. Ready for CDG lib migration work.
-- Last: Copied skills, rules, docs from CDGonGCP; removed obsolete root files; aligned .agentignore and .gitignore.
+- State: Modular project documentation system created under doc/ directory. Root README linked.
+- Last: Generated doc/ README, architecture, installation, api/caching, indicators, and deployment guides.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 14: Generate Project Documentation
+
+- Date: 2026-07-01
+- Agent: Antigravity
+- Goal: Create modular, comprehensive documentation system in doc/ directory.
+- Constraints: None.
+- Done:
+  - Created [README.md](file:///c:/Users/lucas/Code/CDG/doc/README.md) hub to organize documentation system.
+  - Created [architecture.md](file:///c:/Users/lucas/Code/CDG/doc/architecture.md) detailing ingestion/processing flows and Mermaid diagrams.
+  - Created [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md) detailing CLI commands and interactive pager.
+  - Created [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md) detailing CoinGecko retry mechanisms and SQLite caching logic.
+  - Created [analysis_optimization.md](file:///c:/Users/lucas/Code/CDG/doc/analysis_optimization.md) documenting technical indicators formulas and Monte Carlo simulation.
+  - Created [deployment.md](file:///c:/Users/lucas/Code/CDG/doc/deployment.md) covering output folder structure and containerization / GCP Cloud Run integration.
+  - Modified root [README.md](file:///c:/Users/lucas/Code/CDG/README.md) to link to the new documentation files.
+- Blocked: None.
+- Risk: None.
+- Artifact: `doc/` directory files: `doc/README.md`, `doc/architecture.md`, `doc/installation_usage.md`, `doc/api_cache.md`, `doc/analysis_optimization.md`, `doc/deployment.md`.
+- Verification: Passed `cargo test` successfully (all 27 tests passed).
+- Pending: None.
 
 ### Session 13: AI Engineering Infrastructure Sync
 
