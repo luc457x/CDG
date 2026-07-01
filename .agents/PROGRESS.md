@@ -2,12 +2,31 @@
 
 ## Status
 
-- State: Modular project documentation system created under doc/ directory. Root README linked.
-- Last: Generated doc/ README, architecture, installation, api/caching, indicators, and deployment guides.
+- State: Configurable cache TTL CLI flag and interactive menu option implemented.
+- Last: Added --cache-ttl CLI option, Configure Cache TTL menu action, updated docs, and passed all tests.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 15: Add Customizable Cache TTL
+
+- Date: 2026-07-01
+- Agent: Antigravity
+- Goal: Add configurable cache TTL command-line flag and interactive menu option.
+- Constraints: None.
+- Done:
+  - Added `--cache-ttl` global command-line argument to `Cli` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L17-L19).
+  - Configured CoinGecko and Yahoo Finance API clients to use custom cache TTL.
+  - Added "Configure Cache TTL" option to the interactive console menu in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L931-L941).
+  - Fixed clippy redundant field warning in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L212).
+  - Updated documentation in [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md) and [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md).
+  - Added CLI parser unit test `test_cli_parsing_cache_ttl` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L981-L986).
+- Blocked: None.
+- Risk: Short TTL values (e.g. <30s) could increase HTTP 429 rate limit errors from CoinGecko under high traffic.
+- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md), [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md).
+- Verification: `cargo test` passed 28/28 tests; `cargo clippy` and `cargo fmt` passed with zero errors/warnings.
+- Pending: None.
 
 ### Session 14: Generate Project Documentation
 

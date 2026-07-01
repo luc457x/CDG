@@ -50,8 +50,9 @@ This mode clears the terminal and presents a menu driven by the keyboard:
 - **Ping Services**: Ping the API servers to verify connectivity.
 - **List Supported Coins**: Displays the top 50 cryptocurrencies by market cap in a clean terminal table.
 - **Get Trending Coins**: Retrieves and prints current trending cryptocurrencies from CoinGecko.
-- **Check Coin ID Validity**: Validates if a coin exists on CoinGecko, and returns suggestions if not.
 - **Get Raw OHLCV Data**: Queries, displays, and exports raw historical candlestick data.
+- **Check Coin ID Validity**: Validates if a coin exists on CoinGecko, and returns suggestions if not.
+- **Configure Cache TTL**: Dynamically updates the cache expiration time for the session.
 - **Exit**: Close the application.
 
 > [!NOTE]
@@ -114,6 +115,7 @@ cargo run -- check-coin btc
 
 - `--db-path <path>`: SQLite database cache path (default: `cdg_files/cache.db`).
 - `-o`, `--output-prefix <prefix>`: Prefix for generated pipeline outputs (default: `cdg_files/output`).
+- `--cache-ttl <seconds>`: Cache TTL in seconds (default: `300` / 5 minutes).
 
 ### Subcommand `run-pipeline` Options
 
