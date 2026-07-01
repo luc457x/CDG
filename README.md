@@ -182,7 +182,7 @@ At the start of every pipeline run or standalone OHLCV retrieval, directories ar
 
 Contains the complete aligned dataset, optimal weights, and generated charts:
 
-```
+```text
 cdg_files/run_20260613_091730/
 ├── data.csv                # Complete aligned dataset (prices, indicators, scaled features)
 ├── data.parquet            # Parquet format of the aligned dataset (optimized for Pandas/ML)
@@ -199,7 +199,7 @@ cdg_files/run_20260613_091730/
 
 Contains raw fetched candlestick data in both JSON and CSV format for each coin-currency pair:
 
-```
+```text
 cdg_files/can_20260613_091730/
 ├── bitcoin_usd.csv         # Raw OHLCV data in CSV format (timestamp, open, high, low, close)
 └── bitcoin_usd.json        # Raw OHLCV data in JSON format
