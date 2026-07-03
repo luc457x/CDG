@@ -1,5 +1,5 @@
 ---
-name: merge-to-main-excluding-ai-docs
+name: merge-no-ai
 description: Merges dev branch to main. Keeps AI docs (.agents/, AGENTS.md, etc.) tracked only on dev. Ignored/untracked on main.
 when_to_use: user requests to merge dev branch to main, push to main branch, or sync dev to main excluding AI documentation.
 metadata:
@@ -15,7 +15,7 @@ Merges development changes into `main` without tracking AI documentation (`.agen
 Run Python helper script from workspace root:
 
 ```bash
-python .agents/skills/merge-to-main-excluding-ai-docs/scripts/merge_to_main.py
+python .agents/skills/merge-no-ai/scripts/merge_to_main.py
 ```
 
 ### Manual Steps Performed by Script
