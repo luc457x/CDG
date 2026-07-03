@@ -853,30 +853,21 @@ pub fn compute_indicators_raw(prices: &[f64], volumes: &[f64]) -> IndicatorResul
     let n = prices.len();
     let mut simple_returns = vec![0.0; n];
     let mut log_returns = vec![0.0; n];
-    let mut ema_12 = vec![0.0; n];
-    let mut ema_26 = vec![0.0; n];
-    let mut macd = vec![0.0; n];
-    let mut macd_signal = vec![0.0; n];
-    let mut macd_histogram = vec![0.0; n];
-    let mut rsi_14 = vec![0.0; n];
-    let mut obv = vec![0.0; n];
 
     if n == 0 {
         return IndicatorResult {
             simple_returns,
             log_returns,
-            ema_12,
-            ema_26,
-            macd,
-            macd_signal,
-            macd_histogram,
-            rsi_14,
-            obv,
+            ema_12: vec![],
+            ema_26: vec![],
+            macd: vec![],
+            macd_signal: vec![],
+            macd_histogram: vec![],
+            rsi_14: vec![],
+            obv: vec![],
         };
     }
 
-    // 1. Returns and OBV
-    obv[0] = volumes[0];
     for i in 1..n {
         let prev_p = prices[i - 1];
         let curr_p = prices[i];
@@ -884,81 +875,20 @@ pub fn compute_indicators_raw(prices: &[f64], volumes: &[f64]) -> IndicatorResul
             simple_returns[i] = (curr_p - prev_p) / prev_p;
             log_returns[i] = (curr_p / prev_p).ln();
         }
-        if curr_p > prev_p {
-            obv[i] = obv[i - 1] + volumes[i];
-        } else if curr_p < prev_p {
-            obv[i] = obv[i - 1] - volumes[i];
-        } else {
-            obv[i] = obv[i - 1];
-        }
     }
 
-    // Helper for EMA calculation
-    let calc_ema = |data: &[f64], period: usize| -> Vec<f64> {
-        let mut ema = vec![0.0; n];
-        if n < period {
-            return ema;
-        }
-        let k = 2.0 / (period as f64 + 1.0);
-        let sum: f64 = data[0..period].iter().sum();
-        ema[period - 1] = sum / (period as f64);
-        for i in period..n {
-            ema[i] = data[i] * k + ema[i - 1] * (1.0 - k);
-        }
-        ema
+    let to_f64_vec = |opt_vec: Vec<Option<f64>>| -> Vec<f64> {
+        opt_vec.into_iter().map(|opt| opt.unwrap_or(0.0)).collect()
     };
 
-    // 2. EMAs
-    ema_12 = calc_ema(prices, 12);
-    ema_26 = calc_ema(prices, 26);
-
-    // 3. MACD
-    for i in 0..n {
-        macd[i] = ema_12[i] - ema_26[i];
-    }
-    macd_signal = calc_ema(&macd, 9);
-    for i in 0..n {
-        macd_histogram[i] = macd[i] - macd_signal[i];
-    }
-
-    // 4. RSI (14)
-    if n >= 14 {
-        let mut gains = vec![0.0; n];
-        let mut losses = vec![0.0; n];
-        for i in 1..n {
-            let diff = prices[i] - prices[i - 1];
-            if diff > 0.0 {
-                gains[i] = diff;
-            } else {
-                losses[i] = -diff;
-            }
-        }
-        let mut avg_gain = vec![0.0; n];
-        let mut avg_loss = vec![0.0; n];
-
-        let mut sum_gain = 0.0;
-        let mut sum_loss = 0.0;
-        for i in 1..=14 {
-            sum_gain += gains[i];
-            sum_loss += losses[i];
-        }
-        avg_gain[14] = sum_gain / 14.0;
-        avg_loss[14] = sum_loss / 14.0;
-
-        for i in 15..n {
-            avg_gain[i] = (avg_gain[i - 1] * 13.0 + gains[i]) / 14.0;
-            avg_loss[i] = (avg_loss[i - 1] * 13.0 + losses[i]) / 14.0;
-        }
-
-        for i in 14..n {
-            if avg_loss[i] == 0.0 {
-                rsi_14[i] = 100.0;
-            } else {
-                let rs = avg_gain[i] / avg_loss[i];
-                rsi_14[i] = 100.0 - (100.0 / (1.0 + rs));
-            }
-        }
-    }
+    let ema_12 = to_f64_vec(calculate_ema(prices, 12));
+    let ema_26 = to_f64_vec(calculate_ema(prices, 26));
+    let (macd_opt, macd_signal_opt, macd_hist_opt) = calculate_macd(prices);
+    let macd = to_f64_vec(macd_opt);
+    let macd_signal = to_f64_vec(macd_signal_opt);
+    let macd_histogram = to_f64_vec(macd_hist_opt);
+    let rsi_14 = to_f64_vec(calculate_rsi(prices, 14));
+    let obv = to_f64_vec(calculate_obv(prices, volumes));
 
     IndicatorResult {
         simple_returns,

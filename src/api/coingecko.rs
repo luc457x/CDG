@@ -67,14 +67,6 @@ impl CoinGeckoClient {
         let mut retry_delay = std::time::Duration::from_millis(10000);
 
         loop {
-            if attempts == 0 {
-                // Rate-limiting delay on cache misses to prevent CoinGecko API 429
-                #[cfg(not(test))]
-                {
-                    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
-                }
-            }
-
             // Fetch from API using reqwest's built-in query encoding
             let response = self
                 .client
@@ -216,13 +208,11 @@ impl CoinGeckoClient {
 
     pub async fn get_coin_tickers(&self, coin_id: &str, page: Option<u32>) -> Result<Value> {
         let endpoint = format!("/coins/{}/tickers", coin_id);
-        let page_str;
-        let query = if let Some(p) = page {
-            page_str = p.to_string();
-            vec![("page", page_str.as_str())]
-        } else {
-            vec![]
-        };
+        let mut query = Vec::new();
+        let page_str = page.map(|p| p.to_string());
+        if let Some(ref p_str) = page_str {
+            query.push(("page", p_str.as_str()));
+        }
         let res = self.get_request(&endpoint, &query, true).await?;
         Ok(serde_json::from_str(&res)?)
     }

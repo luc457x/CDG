@@ -78,12 +78,9 @@ impl Cache {
                 return Ok(Some(r.response_body));
             } else {
                 // Expired: delete it
-                sqlx::query!(
-                    "DELETE FROM api_cache WHERE url = ?",
-                    url
-                )
-                .execute(&self.pool)
-                .await?;
+                sqlx::query!("DELETE FROM api_cache WHERE url = ?", url)
+                    .execute(&self.pool)
+                    .await?;
             }
         }
         Ok(None)

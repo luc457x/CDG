@@ -4,6 +4,12 @@ use cdg::cache::Cache;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+fn cleanup_db(db_path: &str) {
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+}
+
 async fn start_mock_server(response_body: String) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -29,7 +35,7 @@ async fn start_mock_server(response_body: String) -> (String, tokio::task::JoinH
 #[tokio::test]
 async fn test_coingecko_ping() {
     let db_path = "tests/test_coingecko_ping.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"{"gecko_says": "(V3) To the Moon!"}"#;
@@ -41,14 +47,14 @@ async fn test_coingecko_ping() {
     let val = client.ping().await.unwrap();
     assert_eq!(val["gecko_says"], "(V3) To the Moon!");
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
 #[tokio::test]
 async fn test_yahoo_fetch_ticker_chart() {
     let db_path = "tests/test_yahoo.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_json = r#"{"chart":{"result":[{"timestamp":[1700000000],"indicators":{"quote":[{"close":[5050.0]}],"adjclose":[{"adjclose":[5050.0]}]}}],"error":null}}"#;
@@ -63,14 +69,14 @@ async fn test_yahoo_fetch_ticker_chart() {
         .unwrap();
     assert!(json_data.contains("5050.0"));
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
 #[tokio::test]
 async fn test_coingecko_ohlc() {
     let db_path = "tests/test_coingecko_ohlc.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"[[1700000000000, 50000.0, 51000.0, 49000.0, 50500.0]]"#;
@@ -84,14 +90,14 @@ async fn test_coingecko_ohlc() {
     assert_eq!(val[0][0], 1700000000000.0);
     assert_eq!(val[0][1], 50000.0);
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
 #[tokio::test]
 async fn test_coingecko_tickers() {
     let db_path = "tests/test_coingecko_tickers.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"{"name": "Bitcoin", "tickers": [{"base": "BTC", "target": "USD", "market": {"name": "Binance", "identifier": "binance"}, "last": 60000.0, "volume": 1000.0, "bid_ask_spread_percentage": 0.05}]}"#;
@@ -104,7 +110,7 @@ async fn test_coingecko_tickers() {
     assert_eq!(val["name"], "Bitcoin");
     assert_eq!(val["tickers"][0]["market"]["name"], "Binance");
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
@@ -113,7 +119,7 @@ async fn test_coingecko_check_coin_id() {
     use cdg::api::coingecko::CoinSuggestion;
 
     let db_path = "tests/test_coingecko_resolve_coin_id.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"[
@@ -149,14 +155,14 @@ async fn test_coingecko_check_coin_id() {
         .unwrap();
     assert!(suggestions_empty.is_empty());
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
 #[tokio::test]
 async fn test_coingecko_list_coins() {
     let db_path = "tests/test_coingecko_list_coins.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"[{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}]"#;
@@ -169,14 +175,14 @@ async fn test_coingecko_list_coins() {
     assert_eq!(val.len(), 1);
     assert_eq!(val[0]["id"], "bitcoin");
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
 #[tokio::test]
 async fn test_coingecko_trending() {
     let db_path = "tests/test_coingecko_trending.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"{"coins": [{"item": {"id": "bitcoin", "name": "Bitcoin"}}]}"#;
@@ -188,14 +194,14 @@ async fn test_coingecko_trending() {
     let val = client.get_search_trending().await.unwrap();
     assert_eq!(val["coins"][0]["item"]["id"], "bitcoin");
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }
 
 #[tokio::test]
 async fn test_yahoo_ping() {
     let db_path = "tests/test_yahoo_ping.db";
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_json = r#"{"chart":{"result":[{"timestamp":[1700000000],"indicators":{"quote":[{"close":[5050.0]}],"adjclose":[{"adjclose":[5050.0]}]}}],"error":null}}"#;
@@ -207,6 +213,6 @@ async fn test_yahoo_ping() {
     let val = client.ping().await;
     assert!(val.is_ok());
 
-    let _ = std::fs::remove_file(db_path);
+    cleanup_db(db_path);
     drop(_server_handle);
 }

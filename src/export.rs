@@ -20,3 +20,28 @@ pub fn export_parquet(df: &mut DataFrame, path: &str) -> Result<()> {
     ParquetWriter::new(file).finish(df)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polars::prelude::*;
+
+    #[test]
+    fn test_exports() {
+        let mut df = DataFrame::new(vec![
+            Series::new("a", vec![1.0, 2.0]),
+            Series::new("b", vec![3.0, 4.0]),
+        ])
+        .unwrap();
+
+        let temp_csv = "tests/temp_test.csv";
+        let temp_pq = "tests/temp_test.parquet";
+
+        assert!(export_csv(&mut df, temp_csv).is_ok());
+        assert!(export_parquet(&mut df, temp_pq).is_ok());
+
+        // Clean up
+        let _ = std::fs::remove_file(temp_csv);
+        let _ = std::fs::remove_file(temp_pq);
+    }
+}

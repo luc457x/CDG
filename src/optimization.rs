@@ -104,11 +104,15 @@ pub fn run_monte_carlo(
     let mut cov_matrix = vec![vec![0.0; m]; m];
     for i in 0..m {
         for j in 0..m {
-            let mut sum = 0.0;
-            for k in 0..t {
-                sum += (returns[i][k] - daily_mean_returns[i]) * (returns[j][k] - daily_mean_returns[j]);
-            }
-            let daily_cov = sum / (t - 1).max(1) as f64;
+            let mean_i = daily_mean_returns[i];
+            let mean_j = daily_mean_returns[j];
+            let daily_cov = returns[i]
+                .iter()
+                .take(t)
+                .zip(returns[j].iter().take(t))
+                .map(|(r_i, r_j)| (r_i - mean_i) * (r_j - mean_j))
+                .sum::<f64>()
+                / (t - 1).max(1) as f64;
             cov_matrix[i][j] = daily_cov * (factors[i] * factors[j]).sqrt();
         }
     }
@@ -161,12 +165,13 @@ pub fn run_monte_carlo(
 
             let mut weights = vec![0.0; m];
             let mut sum = 0.0;
-            for j in 0..m {
-                weights[j] = rng.next_f64();
-                sum += weights[j];
+            for w in weights.iter_mut() {
+                // Add a small minimum raw weight to prevent exactly 0% allocation
+                *w = rng.next_f64() + 0.01;
+                sum += *w;
             }
-            for j in 0..m {
-                weights[j] /= sum;
+            for w in weights.iter_mut() {
+                *w /= sum;
             }
 
             // Annualized portfolio expected return
@@ -184,11 +189,7 @@ pub fn run_monte_carlo(
             }
             let p_vol = p_var.sqrt();
 
-            let sharpe = if p_vol > 0.0 {
-                p_ret / p_vol
-            } else {
-                0.0
-            };
+            let sharpe = if p_vol > 0.0 { p_ret / p_vol } else { 0.0 };
 
             // Convert return and vol to percentages for plotting & UI
             let ann_ret_pct = p_ret * 100.0;
@@ -368,8 +369,14 @@ mod tests {
         let result_same = run_monte_carlo(&df, &assets, &factors_same, 500, Some(42)).unwrap();
 
         // Verify that different factors lead to different annualized outcomes
-        assert_ne!(result_diff.max_sharpe.annualized_return, result_same.max_sharpe.annualized_return);
-        assert_ne!(result_diff.max_sharpe.annualized_volatility, result_same.max_sharpe.annualized_volatility);
+        assert_ne!(
+            result_diff.max_sharpe.annualized_return,
+            result_same.max_sharpe.annualized_return
+        );
+        assert_ne!(
+            result_diff.max_sharpe.annualized_volatility,
+            result_same.max_sharpe.annualized_volatility
+        );
     }
 
     #[test]

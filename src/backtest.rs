@@ -75,7 +75,7 @@ pub fn calculate_r2(actuals: &[f64], predicted: &[f64]) -> f64 {
     1.0 - (ss_res / ss_tot)
 }
 
-pub fn calculate_sharpe(returns: &[f64]) -> f64 {
+pub fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
     if returns.is_empty() {
         return 0.0;
     }
@@ -91,7 +91,7 @@ pub fn calculate_sharpe(returns: &[f64]) -> f64 {
     if std_dev == 0.0 {
         return 0.0;
     }
-    (mean / std_dev) * (365.0_f64).sqrt()
+    (mean / std_dev) * (annualization_factor).sqrt()
 }
 
 pub fn calculate_max_drawdown(equity: &[f64]) -> f64 {
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn test_calculate_sharpe() {
         let returns = vec![0.01, 0.02, -0.01, 0.015];
-        let sharpe = calculate_sharpe(&returns);
+        let sharpe = calculate_sharpe(&returns, 365.0);
         assert!(sharpe > 0.0);
     }
 

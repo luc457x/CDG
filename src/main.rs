@@ -117,20 +117,20 @@ async fn main() -> Result<()> {
             concurrency,
             annualization_factor,
         }) => {
-            run_pipeline_flow(
-                &coin,
-                &currency,
+            run_pipeline_flow(PipelineConfig {
+                coin: &coin,
+                currency: &currency,
                 days,
                 prep_ml,
                 light,
                 drop_weekends,
-                &args.db_path,
-                &args.output_prefix,
+                db_path: &args.db_path,
+                output_prefix: &args.output_prefix,
                 seed,
-                args.cache_ttl,
+                cache_ttl: args.cache_ttl,
                 concurrency,
                 annualization_factor,
-            )
+            })
             .await?;
         }
         Some(Commands::Ping) => {
@@ -261,25 +261,39 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_pipeline_flow(
-    coin: &str,
-    currency: &str,
-    mut days: u32,
-    prep_ml: bool,
-    light: bool,
-    drop_weekends: bool,
-    db_path: &str,
-    output_prefix: &str,
-    seed: Option<u64>,
-    cache_ttl: i64,
-    concurrency: usize,
-    annualization_factor: Option<f64>,
-) -> Result<()> {
+pub struct PipelineConfig<'a> {
+    pub coin: &'a str,
+    pub currency: &'a str,
+    pub days: u32,
+    pub prep_ml: bool,
+    pub light: bool,
+    pub drop_weekends: bool,
+    pub db_path: &'a str,
+    pub output_prefix: &'a str,
+    pub seed: Option<u64>,
+    pub cache_ttl: i64,
+    pub concurrency: usize,
+    pub annualization_factor: Option<f64>,
+}
+
+async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     // Lightweight override
-    if light {
-        days = 30;
+    if config.light {
+        config.days = 30;
     }
+
+    let coin = config.coin;
+    let currency = config.currency;
+    let days = config.days;
+    let prep_ml = config.prep_ml;
+    let light = config.light;
+    let drop_weekends = config.drop_weekends;
+    let db_path = config.db_path;
+    let output_prefix = config.output_prefix;
+    let seed = config.seed;
+    let cache_ttl = config.cache_ttl;
+    let concurrency = config.concurrency;
+    let annualization_factor = config.annualization_factor;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let run_dir = format!("cdg_files/run_{}", timestamp);
@@ -442,16 +456,23 @@ async fn run_pipeline_flow(
                 .await?;
             let cg_json_str = serde_json::to_string(&cg_val)?;
 
-            let price_col_name = format!("{}_{}", c, curr);
+            let c_safe = cdg::utils::sanitize_name(&c);
+            let curr_safe = cdg::utils::sanitize_name(&curr);
+            cdg::utils::validate_safe_path(&c_safe)?;
+            cdg::utils::validate_safe_path(&curr_safe)?;
+
+            let price_col_name = format!("{}_{}", c_safe, curr_safe);
             let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
 
             let ohlc_val = client.get_coin_ohlc(&c, &curr, &days_str).await?;
 
             let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_val)?;
-            let json_file_path = format!("{}/{}_{}.json", ohlcv_dir_clone, c, curr);
+            let json_file_path = format!("{}/{}_{}.json", ohlcv_dir_clone, c_safe, curr_safe);
+            cdg::utils::validate_safe_path(&json_file_path)?;
             std::fs::write(&json_file_path, &ohlc_json_pretty)?;
 
-            let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir_clone, c, curr);
+            let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir_clone, c_safe, curr_safe);
+            cdg::utils::validate_safe_path(&csv_file_path)?;
             let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
             writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
             for row in &ohlc_val {
@@ -492,6 +513,11 @@ async fn run_pipeline_flow(
     }
 
     // Merge all currency DataFrames
+    if currency_dfs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No cryptocurrency data was successfully loaded"
+        ));
+    }
     let mut main_df = currency_dfs[0].clone();
     if currency_dfs.len() > 1 {
         main_df = analysis::align_datasets(&main_df, &currency_dfs[1..], false)?;
@@ -607,25 +633,18 @@ async fn run_pipeline_flow(
     pb.finish_with_message("Data fetching and processing complete.");
 
     // 12. Portfolio Optimization (Markowitz Monte Carlo)
-    if assets_to_plot.len() >= 2 {
+    if currency_cols.len() >= 2 {
         println!("\n==================================================");
         println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
         println!("==================================================");
 
-        // Compute annualization factors dynamically
-        let factors: Vec<f64> = assets_to_plot.iter().map(|asset| {
-            if let Some(val) = annualization_factor {
-                val
-            } else if currency_cols.contains(asset) {
-                365.0
-            } else if asset.to_uppercase().ends_with("-USD") || asset.to_uppercase().ends_with("-EUR") {
-                365.0
-            } else {
-                252.0
-            }
-        }).collect();
+        // Compute annualization factors dynamically for target assets only
+        let factors: Vec<f64> = currency_cols
+            .iter()
+            .map(|_| annualization_factor.unwrap_or(365.0))
+            .collect();
 
-        match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, &factors, 10000, seed) {
+        match cdg::optimization::run_monte_carlo(&final_df, &currency_cols, &factors, 10000, seed) {
             Ok(opt_res) => {
                 println!("\nOptimal Portfolio Formulations (Annualized):");
                 let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
@@ -633,14 +652,14 @@ async fn run_pipeline_flow(
 
                 println!("\nOptimal Asset Weights:");
                 let weights_table =
-                    cdg::optimization::format_optimal_weights_table(&assets_to_plot, &opt_res);
+                    cdg::optimization::format_optimal_weights_table(&currency_cols, &opt_res);
                 println!("{}", weights_table);
 
                 // Save weights CSV
                 let weights_path = format!("{}/portfolio_weights.csv", run_dir);
                 let mut w_file = std::fs::File::create(&weights_path)?;
                 writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
-                for (i, asset) in assets_to_plot.iter().enumerate() {
+                for (i, asset) in currency_cols.iter().enumerate() {
                     writeln!(
                         w_file,
                         "{},{:.6},{:.6}",
@@ -681,9 +700,14 @@ async fn run_ohlcv_flow(
     format: &str,
     output_prefix: &str,
 ) -> Result<()> {
+    let sanitized_coin = cdg::utils::sanitize_name(coin);
+    let sanitized_currency = cdg::utils::sanitize_name(currency);
+    cdg::utils::validate_safe_path(&sanitized_coin)?;
+    cdg::utils::validate_safe_path(&sanitized_currency)?;
+
     println!(
         "Retrieving OHLC data for {} in {} ({} days)...",
-        coin, currency, days
+        sanitized_coin, sanitized_currency, days
     );
     let ohlc_data = cg_client
         .get_coin_ohlc(coin, currency, &days.to_string())
@@ -695,10 +719,18 @@ async fn run_ohlcv_flow(
 
     // Save raw OHLCV JSON and CSV files inside ohlcv_dir
     let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_data)?;
-    let json_file_path = format!("{}/{}_{}.json", ohlcv_dir, coin, currency);
+    let json_file_path = format!(
+        "{}/{}_{}.json",
+        ohlcv_dir, sanitized_coin, sanitized_currency
+    );
+    cdg::utils::validate_safe_path(&json_file_path)?;
     std::fs::write(&json_file_path, &ohlc_json_pretty)?;
 
-    let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir, coin, currency);
+    let csv_file_path = format!(
+        "{}/{}_{}.csv",
+        ohlcv_dir, sanitized_coin, sanitized_currency
+    );
+    cdg::utils::validate_safe_path(&csv_file_path)?;
     let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
     writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
     for row in &ohlc_data {
@@ -715,7 +747,11 @@ async fn run_ohlcv_flow(
     match format.to_lowercase().as_str() {
         "json" => {
             let json_str = serde_json::to_string_pretty(&ohlc_data)?;
-            let file_path = format!("{}_{}_{}_ohlc.json", output_prefix, coin, currency);
+            let file_path = format!(
+                "{}_{}_{}_ohlc.json",
+                output_prefix, sanitized_coin, sanitized_currency
+            );
+            cdg::utils::validate_safe_path(&file_path)?;
             if let Some(parent) = std::path::Path::new(&file_path).parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -723,7 +759,11 @@ async fn run_ohlcv_flow(
             println!("OHLC data exported to JSON file: {}", file_path);
         }
         "csv" => {
-            let file_path = format!("{}_{}_{}_ohlc.csv", output_prefix, coin, currency);
+            let file_path = format!(
+                "{}_{}_{}_ohlc.csv",
+                output_prefix, sanitized_coin, sanitized_currency
+            );
+            cdg::utils::validate_safe_path(&file_path)?;
             if let Some(parent) = std::path::Path::new(&file_path).parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -767,6 +807,19 @@ async fn run_ohlcv_flow(
     Ok(())
 }
 
+#[cfg(windows)]
+fn clear_terminal() {
+    if std::process::Command::new("cmd")
+        .args(["/c", "cls"])
+        .status()
+        .is_err()
+    {
+        print!("\x1B[2J\x1B[1;1H");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
+}
+
+#[cfg(not(windows))]
 fn clear_terminal() {
     print!("\x1B[2J\x1B[1;1H");
     let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -865,10 +918,27 @@ async fn run_interactive_menu(
                     seed_str.parse::<u64>().ok()
                 };
 
+                let concurrency: usize = dialoguer::Input::new()
+                    .with_prompt("Enter Concurrency Limit")
+                    .default(3)
+                    .interact_text()?;
+
+                let ann_factor_str: String = dialoguer::Input::new()
+                    .with_prompt(
+                        "Enter Annualization Factor Override (optional, press Enter to skip)",
+                    )
+                    .allow_empty(true)
+                    .interact_text()?;
+                let annualization_factor = if ann_factor_str.is_empty() {
+                    None
+                } else {
+                    ann_factor_str.parse::<f64>().ok()
+                };
+
                 println!("\nRunning pipeline...\n");
-                if let Err(e) = run_pipeline_flow(
-                    &coin,
-                    &currency,
+                if let Err(e) = run_pipeline_flow(PipelineConfig {
+                    coin: &coin,
+                    currency: &currency,
                     days,
                     prep_ml,
                     light,
@@ -877,9 +947,9 @@ async fn run_interactive_menu(
                     output_prefix,
                     seed,
                     cache_ttl,
-                    3,
-                    None,
-                )
+                    concurrency,
+                    annualization_factor,
+                })
                 .await
                 {
                     println!("Error running pipeline: {}", e);

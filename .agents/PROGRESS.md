@@ -2,12 +2,37 @@
 
 ## Status
 
-- State: Backlog updated with Markowitz zero-weight and benchmarks separation issues.
-- Last: Added new analysis items to the backlog.
+- State: Code review findings fully implemented, formatting checked, and tests passing.
+- Last: Implemented structural refactoring, safety checks, input validation, and test suite cleanups.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 18: Implement Code Review Findings
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Implement all fixes and structural refactors from the code review findings.
+- Constraints: None.
+- Done:
+  - Added empty guard check to prevent panics in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L514-L518).
+  - Excluded benchmarks from portfolio covariance/weights optimization, and added minimum weight constraint in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L160-L173).
+  - Sanitized and validated input paths in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L442-L457).
+  - Removed unconditional 3s sleep on cache misses in [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs#L70-L77).
+  - Refactored duplicate indicator logic in [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs#L852-L974).
+  - Prompted for concurrency and annualization override in interactive menu of [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L865-L885).
+  - Updated `calculate_sharpe` signature in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L75-L95).
+  - Cleaned up ticker pagination lifetimes in [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs#L215-L225).
+  - Added SQLite WAL cleanup helper to [api_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/api_tests.rs#L4-L10).
+  - Refactored pipeline flow arguments into `PipelineConfig` struct in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L259-L285).
+  - Configured native `cmd /c cls` for terminal clearing on Windows in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L798-L808).
+  - Added CSV and Parquet export unit tests in [export.rs](file:///c:/Users/lucas/Code/CDG/src/export.rs#L20-L48).
+- Blocked: None.
+- Risk: None.
+- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs), [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [export.rs](file:///c:/Users/lucas/Code/CDG/src/export.rs), [api_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/api_tests.rs).
+- Verification: `cargo test` passed 38/38 tests. `cargo clippy` passed with zero errors/warnings.
+- Pending: None.
 
 ### Session 17: Add New Items to Backlog
 
@@ -23,44 +48,3 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 - Verification: File reviewed.
 - Pending: None.
 
-### Session 16: Implement Backlog Items
-
-- Date: 2026-07-03
-- Agent: Antigravity
-- Goal: Implement all items from the backlog: WAL performance settings, compile-time macros offline metadata, parallel ingestion, and asset-specific annualization.
-- Constraints: None.
-- Done:
-  - Enabled WAL mode and Normal synchronization in [cache.rs](file:///c:/Users/lucas/Code/CDG/src/cache.rs#L38-L42).
-  - Replaced runtime SQL queries with compile-time checked `sqlx::query!` macros in [cache.rs](file:///c:/Users/lucas/Code/CDG/src/cache.rs#L55-L94).
-  - Generated `.sqlx/` offline metadata directory in the project root to support offline compilation.
-  - Implemented parallel CoinGecko charts/OHLC data fetching using `tokio::task::JoinSet` and `tokio::sync::Semaphore` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L420-L490).
-  - Added CLI flag `--concurrency` (env `COINGECKO_CONCURRENCY`) to control concurrent requests.
-  - Updated [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L44-L185) to dynamically scale returns and covariance matrices using asset-specific annualization factors.
-  - Added heuristic logic to classify asset class (Crypto -> 365, Stocks -> 252) and added CLI flag `--annualization-factor` (env `ANNUALIZATION_FACTOR`) to override all factors to a single custom value.
-  - Added unit test `test_asset_specific_annualization` in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L353-L373) and updated existing test files.
-  - Cleared all implemented items from [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md).
-  - Updated specifications in [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md).
-- Blocked: None.
-- Risk: CoinGecko free API rate limit (429) might trigger if concurrency is set too high.
-- Artifact: [cache.rs](file:///c:/Users/lucas/Code/CDG/src/cache.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md), [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md), [walkthrough.md](file:///C:/Users/lucas/.gemini/antigravity-ide/brain/728f513f-51b6-4f83-aa45-257d1328dfe4/walkthrough.md).
-- Verification: `$env:SQLX_OFFLINE="true"; cargo test` passed 37 tests.
-- Pending: None.
-
-### Session 15: Add Customizable Cache TTL
-
-- Date: 2026-07-01
-- Agent: Antigravity
-- Goal: Add configurable cache TTL command-line flag and interactive menu option.
-- Constraints: None.
-- Done:
-  - Added `--cache-ttl` global command-line argument to `Cli` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L17-L19).
-  - Configured CoinGecko and Yahoo Finance API clients to use custom cache TTL.
-  - Added "Configure Cache TTL" option to the interactive console menu in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L931-L941).
-  - Fixed clippy redundant field warning in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L212).
-  - Updated documentation in [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md) and [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md).
-  - Added CLI parser unit test `test_cli_parsing_cache_ttl` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L981-L986).
-- Blocked: None.
-- Risk: Short TTL values (e.g. <30s) could increase HTTP 429 rate limit errors from CoinGecko under high traffic.
-- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md), [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md).
-- Verification: `cargo test` passed 28/28 tests; `cargo clippy` and `cargo fmt` passed with zero errors/warnings.
-- Pending: None.
