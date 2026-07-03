@@ -10,9 +10,9 @@ cdg_files/
 **/*.db-wal
 
 # AI Agent files
-# AGENTS.md
-# .agentignore
-# .agents/
+AGENTS.md
+.agentignore
+.agents/
 .kilo
 .gemini
 .claude
