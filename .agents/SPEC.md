@@ -56,10 +56,13 @@ Port the python CoinGecko and Yahoo Finance data collector to a robust, modular,
 - **FR13 (Context Retrieval)**: Clients must provide methods for listing coins by market cap (`get_coins_markets`), trending search (`get_search_trending`), and raw OHLCV querying.
 - **FR14 (Signal Handling)**: Interactive loop must handle terminal interrupt signals (Ctrl+C) gracefully.
 - **FR15 (Raw OHLCV Export)**: Subcommand and interactive menu for OHLCV must support printing raw OHLCV to stdout or exporting it to JSON/CSV files.
-- **FR16 (Raw OHLCV Folder Export)**: During pipeline runs, raw OHLCV files (both JSON and CSV format) must be saved inside a folder named `can_YYYYMMDD_HHMMSS` within `cdg_files`.
+- **FR16 (Raw OHLCV Folder Export)**: During pipeline runs, raw OHLCV files (in the configured raw format, defaulting to JSON) must be saved inside a folder named `raw_ohlcv` within the pipeline run directory.
 - **FR17 (Interactive CLI Less-like Pager UX)**: In interactive mode, selecting any action must clear the terminal, run the action, print all info to stdout, and display a `[Back]` button. Selecting `[Back]` returns to the main actions menu (which is also displayed on a cleared terminal).
 - **FR18 (Parallel Ingestion Concurrency Control)**: Parallel ingestion of CoinGecko charts and OHLC data must use a semaphore-based concurrency control defaulting to 3, configurable via CLI flag `--concurrency` and env var `COINGECKO_CONCURRENCY`.
 - **FR19 (Asset-Specific Annualization)**: Portfolio expected returns and volatilities must be annualized using dynamic factors (365.0 for Crypto, 252.0 for Traditional stocks/benchmarks). An override CLI flag `--annualization-factor` or env var `ANNUALIZATION_FACTOR` can override all factors to a single custom value.
+- **FR20 (Configurable Output Directory)**: The application must support a configurable base output directory `--output-dir` (default: `cdg_files`) and environment variable `CDG_OUTPUT_DIR`. All run and candlestick outputs, as well as the default SQLite database path and default output prefix, must resolve dynamically relative to this output directory.
+- **FR21 (Configurable Raw Format)**: The application must support a configurable raw format option `--raw-format` (default: `json`) and environment variable `CDG_RAW_FORMAT`, supporting `json` and `csv`. All raw OHLCV files saved during pipeline runs or standalone OHLCV retrieval must be generated in this format only.
+
 
 ## 5. Business Rules (BR)
 

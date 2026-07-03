@@ -113,8 +113,10 @@ cargo run -- check-coin btc
 
 ### Global Flags
 
-- `--db-path <path>`: SQLite database cache path (default: `cdg_files/cache.db`).
-- `-o`, `--output-prefix <prefix>`: Prefix for generated pipeline outputs (default: `cdg_files/output`).
+- `--output-dir <dir>`: Base output directory (default: `cdg_files`, overridable via `CDG_OUTPUT_DIR` environment variable).
+- `--db-path <path>`: SQLite database cache path (default: `{output_dir}/cache.db`).
+- `-o`, `--output-prefix <prefix>`: Prefix for generated pipeline outputs (default: `{output_dir}/output`).
+- `--raw-format <format>`: Raw OHLCV export format: `json` or `csv` (default: `json`, overridable via `CDG_RAW_FORMAT` environment variable).
 - `--cache-ttl <seconds>`: Cache TTL in seconds (default: `300` / 5 minutes).
 
 ### Subcommand `run-pipeline` Options

@@ -6,13 +6,21 @@ use std::io::Write;
 #[derive(Parser, Debug, PartialEq)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// Database file path (default: cdg_files/cache.db)
-    #[arg(long, default_value = "cdg_files/cache.db")]
-    pub db_path: String,
+    /// Base output directory (default: cdg_files)
+    #[arg(long, default_value = "cdg_files", env = "CDG_OUTPUT_DIR")]
+    pub output_dir: String,
 
-    /// Path to export results (default: cdg_files/output)]
-    #[arg(short, long, default_value = "cdg_files/output")]
-    pub output_prefix: String,
+    /// Database file path (default: {output_dir}/cache.db)
+    #[arg(long)]
+    pub db_path: Option<String>,
+
+    /// Path to export results (default: {output_dir}/output)
+    #[arg(short, long)]
+    pub output_prefix: Option<String>,
+
+    /// Raw OHLCV export format: 'json' or 'csv' (default: json)
+    #[arg(long, default_value = "json", env = "CDG_RAW_FORMAT")]
+    pub raw_format: String,
 
     /// Cache TTL in seconds (default: 300)
     #[arg(long, default_value_t = 300)]
@@ -105,6 +113,24 @@ async fn main() -> Result<()> {
 
     let args = Cli::parse();
 
+    let output_dir = args.output_dir;
+    cdg::utils::validate_safe_path(&output_dir)?;
+
+    let raw_format = args.raw_format.to_lowercase();
+    if raw_format != "json" && raw_format != "csv" {
+        return Err(anyhow::anyhow!(
+            "Invalid raw format: '{}'. Must be 'json' or 'csv'.",
+            raw_format
+        ));
+    }
+
+    let db_path = args
+        .db_path
+        .unwrap_or_else(|| format!("{}/cache.db", output_dir));
+    let output_prefix = args
+        .output_prefix
+        .unwrap_or_else(|| format!("{}/output", output_dir));
+
     match args.command {
         Some(Commands::RunPipeline {
             coin,
@@ -124,8 +150,10 @@ async fn main() -> Result<()> {
                 prep_ml,
                 light,
                 drop_weekends,
-                db_path: &args.db_path,
-                output_prefix: &args.output_prefix,
+                db_path: &db_path,
+                output_dir: &output_dir,
+                output_prefix: &output_prefix,
+                raw_format: &raw_format,
                 seed,
                 cache_ttl: args.cache_ttl,
                 concurrency,
@@ -134,7 +162,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Some(Commands::Ping) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
+            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
             let cg_client =
                 api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             let yahoo_client =
@@ -153,7 +181,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::ListCoins) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
+            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
             let cg_client =
                 api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             println!("Fetching top 50 coins by market cap (USD)...");
@@ -183,7 +211,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::Trending) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
+            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
             let cg_client =
                 api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             println!("Fetching trending coins...");
@@ -212,7 +240,7 @@ async fn main() -> Result<()> {
             days,
             format,
         }) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
+            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
             let cg_client =
                 api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             run_ohlcv_flow(
@@ -221,12 +249,14 @@ async fn main() -> Result<()> {
                 &currency,
                 days,
                 &format,
-                &args.output_prefix,
+                &output_dir,
+                &output_prefix,
+                &raw_format,
             )
             .await?;
         }
         Some(Commands::CheckCoin { coin }) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
+            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
             let cg_client =
                 api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             println!("Checking CoinGecko ID for '{}'...", coin);
@@ -254,7 +284,14 @@ async fn main() -> Result<()> {
             }
         }
         None => {
-            run_interactive_menu(&args.db_path, &args.output_prefix, args.cache_ttl).await?;
+            run_interactive_menu(
+                &db_path,
+                &output_dir,
+                &output_prefix,
+                &raw_format,
+                args.cache_ttl,
+            )
+            .await?;
         }
     }
 
@@ -269,7 +306,9 @@ pub struct PipelineConfig<'a> {
     pub light: bool,
     pub drop_weekends: bool,
     pub db_path: &'a str,
+    pub output_dir: &'a str,
     pub output_prefix: &'a str,
+    pub raw_format: &'a str,
     pub seed: Option<u64>,
     pub cache_ttl: i64,
     pub concurrency: Option<usize>,
@@ -289,7 +328,9 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let light = config.light;
     let drop_weekends = config.drop_weekends;
     let db_path = config.db_path;
+    let output_dir = config.output_dir;
     let output_prefix = config.output_prefix;
+    let raw_format = config.raw_format;
     let seed = config.seed;
     let cache_ttl = config.cache_ttl;
     let concurrency = config.concurrency.unwrap_or_else(|| {
@@ -308,12 +349,15 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let annualization_factor = config.annualization_factor;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let run_dir = format!("cdg_files/run_{}", timestamp);
+    let run_dir = format!("{}/run_{}", output_dir, timestamp);
+    cdg::utils::validate_safe_path(&run_dir)?;
     std::fs::create_dir_all(&run_dir)?;
-    let ohlcv_dir = format!("cdg_files/can_{}", timestamp);
+    let ohlcv_dir = format!("{}/raw_ohlcv", run_dir);
+    cdg::utils::validate_safe_path(&ohlcv_dir)?;
     std::fs::create_dir_all(&ohlcv_dir)?;
 
     println!("Starting CDG Data Collector...");
+    println!("Base Output Directory: {}", output_dir);
     println!("Run Directory: {}", run_dir);
     println!("OHLCV Directory: {}", ohlcv_dir);
     println!("Target Coin: {}", coin);
@@ -459,6 +503,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         let client = cg_client_arc.clone();
         let ohlcv_dir_clone = ohlcv_dir.clone();
         let days_str = days.to_string();
+        let raw_format_clone = raw_format.to_string();
 
         join_set.spawn(async move {
             let _permit = sem.acquire().await?;
@@ -478,22 +523,24 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
             let ohlc_val = client.get_coin_ohlc(&c, &curr, &days_str).await?;
 
-            let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_val)?;
-            let json_file_path = format!("{}/{}_{}.json", ohlcv_dir_clone, c_safe, curr_safe);
-            cdg::utils::validate_safe_path(&json_file_path)?;
-            std::fs::write(&json_file_path, &ohlc_json_pretty)?;
-
-            let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir_clone, c_safe, curr_safe);
-            cdg::utils::validate_safe_path(&csv_file_path)?;
-            let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
-            writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
-            for row in &ohlc_val {
-                if row.len() >= 5 {
-                    writeln!(
-                        wtr_ohlcv,
-                        "{},{},{},{},{}",
-                        row[0], row[1], row[2], row[3], row[4]
-                    )?;
+            if raw_format_clone == "json" {
+                let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_val)?;
+                let json_file_path = format!("{}/{}_{}.json", ohlcv_dir_clone, c_safe, curr_safe);
+                cdg::utils::validate_safe_path(&json_file_path)?;
+                std::fs::write(&json_file_path, &ohlc_json_pretty)?;
+            } else if raw_format_clone == "csv" {
+                let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir_clone, c_safe, curr_safe);
+                cdg::utils::validate_safe_path(&csv_file_path)?;
+                let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
+                writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
+                for row in &ohlc_val {
+                    if row.len() >= 5 {
+                        writeln!(
+                            wtr_ohlcv,
+                            "{},{},{},{},{}",
+                            row[0], row[1], row[2], row[3], row[4]
+                        )?;
+                    }
                 }
             }
 
@@ -710,7 +757,9 @@ async fn run_ohlcv_flow(
     currency: &str,
     days: u32,
     format: &str,
+    output_dir: &str,
     output_prefix: &str,
+    raw_format: &str,
 ) -> Result<()> {
     let sanitized_coin = cdg::utils::sanitize_name(coin);
     let sanitized_currency = cdg::utils::sanitize_name(currency);
@@ -726,32 +775,35 @@ async fn run_ohlcv_flow(
         .await?;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let ohlcv_dir = format!("cdg_files/can_{}", timestamp);
+    let ohlcv_dir = format!("{}/can_{}", output_dir, timestamp);
+    cdg::utils::validate_safe_path(&ohlcv_dir)?;
     std::fs::create_dir_all(&ohlcv_dir)?;
 
-    // Save raw OHLCV JSON and CSV files inside ohlcv_dir
-    let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_data)?;
-    let json_file_path = format!(
-        "{}/{}_{}.json",
-        ohlcv_dir, sanitized_coin, sanitized_currency
-    );
-    cdg::utils::validate_safe_path(&json_file_path)?;
-    std::fs::write(&json_file_path, &ohlc_json_pretty)?;
-
-    let csv_file_path = format!(
-        "{}/{}_{}.csv",
-        ohlcv_dir, sanitized_coin, sanitized_currency
-    );
-    cdg::utils::validate_safe_path(&csv_file_path)?;
-    let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
-    writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
-    for row in &ohlc_data {
-        if row.len() >= 5 {
-            writeln!(
-                wtr_ohlcv,
-                "{},{},{},{},{}",
-                row[0], row[1], row[2], row[3], row[4]
-            )?;
+    // Save raw OHLCV JSON or CSV files inside ohlcv_dir based on raw_format
+    if raw_format == "json" {
+        let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_data)?;
+        let json_file_path = format!(
+            "{}/{}_{}.json",
+            ohlcv_dir, sanitized_coin, sanitized_currency
+        );
+        cdg::utils::validate_safe_path(&json_file_path)?;
+        std::fs::write(&json_file_path, &ohlc_json_pretty)?;
+    } else if raw_format == "csv" {
+        let csv_file_path = format!(
+            "{}/{}_{}.csv",
+            ohlcv_dir, sanitized_coin, sanitized_currency
+        );
+        cdg::utils::validate_safe_path(&csv_file_path)?;
+        let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
+        writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
+        for row in &ohlc_data {
+            if row.len() >= 5 {
+                writeln!(
+                    wtr_ohlcv,
+                    "{},{},{},{},{}",
+                    row[0], row[1], row[2], row[3], row[4]
+                )?;
+            }
         }
     }
     println!("Raw OHLCV files saved to: {}", ohlcv_dir);
@@ -849,7 +901,9 @@ fn wait_for_back() {
 
 async fn run_interactive_menu(
     db_path: &str,
+    output_dir: &str,
     output_prefix: &str,
+    raw_format: &str,
     mut cache_ttl: i64,
 ) -> Result<()> {
     let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
@@ -970,7 +1024,9 @@ async fn run_interactive_menu(
                     light,
                     drop_weekends,
                     db_path,
+                    output_dir,
                     output_prefix,
+                    raw_format,
                     seed,
                     cache_ttl,
                     concurrency: Some(concurrency),
@@ -1079,8 +1135,17 @@ async fn run_interactive_menu(
                     .default("stdout".to_string())
                     .interact_text()?;
 
-                if let Err(e) =
-                    run_ohlcv_flow(&cg_client, &coin, &currency, days, &format, output_prefix).await
+                if let Err(e) = run_ohlcv_flow(
+                    &cg_client,
+                    &coin,
+                    &currency,
+                    days,
+                    &format,
+                    output_dir,
+                    output_prefix,
+                    raw_format,
+                )
+                .await
                 {
                     println!("Error fetching/exporting OHLCV data: {}", e);
                 }
@@ -1178,6 +1243,76 @@ mod tests {
         let args = Cli::try_parse_from(&["cdg", "--cache-ttl", "600", "ping"]).unwrap();
         assert_eq!(args.cache_ttl, 600);
         assert_eq!(args.command, Some(Commands::Ping));
+    }
+
+    #[test]
+    fn test_dynamic_path_resolution() {
+        // Case 1: No values specified -> defaults resolved based on output_dir
+        let args = Cli::try_parse_from(&["cdg", "ping"]).unwrap();
+        let output_dir = args.output_dir;
+        assert_eq!(output_dir, "cdg_files");
+        let db_path = args
+            .db_path
+            .unwrap_or_else(|| format!("{}/cache.db", output_dir));
+        let output_prefix = args
+            .output_prefix
+            .unwrap_or_else(|| format!("{}/output", output_dir));
+        assert_eq!(db_path, "cdg_files/cache.db");
+        assert_eq!(output_prefix, "cdg_files/output");
+
+        // Case 2: Custom output_dir specified -> defaults resolved based on that dir
+        let args = Cli::try_parse_from(&["cdg", "--output-dir", "custom_dir", "ping"]).unwrap();
+        let output_dir = args.output_dir;
+        assert_eq!(output_dir, "custom_dir");
+        let db_path = args
+            .db_path
+            .unwrap_or_else(|| format!("{}/cache.db", output_dir));
+        let output_prefix = args
+            .output_prefix
+            .unwrap_or_else(|| format!("{}/output", output_dir));
+        assert_eq!(db_path, "custom_dir/cache.db");
+        assert_eq!(output_prefix, "custom_dir/output");
+
+        // Case 3: Explicit db_path and output_prefix specified -> overrides defaults
+        let args = Cli::try_parse_from(&[
+            "cdg",
+            "--output-dir",
+            "custom_dir",
+            "--db-path",
+            "explicit.db",
+            "--output-prefix",
+            "explicit/prefix",
+            "ping",
+        ])
+        .unwrap();
+        let output_dir = args.output_dir;
+        assert_eq!(output_dir, "custom_dir");
+        let db_path = args
+            .db_path
+            .unwrap_or_else(|| format!("{}/cache.db", output_dir));
+        let output_prefix = args
+            .output_prefix
+            .unwrap_or_else(|| format!("{}/output", output_dir));
+        assert_eq!(db_path, "explicit.db");
+        assert_eq!(output_prefix, "explicit/prefix");
+    }
+
+    #[test]
+    fn test_raw_format_validation() {
+        // Case 1: Default is "json"
+        let args = Cli::try_parse_from(&["cdg", "ping"]).unwrap();
+        assert_eq!(args.raw_format, "json");
+
+        // Case 2: Custom format works
+        let args = Cli::try_parse_from(&["cdg", "--raw-format", "csv", "ping"]).unwrap();
+        assert_eq!(args.raw_format, "csv");
+
+        // Case 3: Case insensitivity and validation works
+        let raw_format_ok = "CSV".to_lowercase();
+        assert_eq!(raw_format_ok, "csv");
+
+        let raw_format_bad = "invalid".to_lowercase();
+        assert!(raw_format_bad != "json" && raw_format_bad != "csv");
     }
 
     #[test]

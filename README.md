@@ -104,8 +104,10 @@ For automation and scripting, the following subcommands are supported:
 | | `--prep-ml` | Enable MinMax and Z-Score features generation (see details below) | `false` |
 | | `--light` | Enable Lightweight Mode (forces coin=bitcoin, days=30, skips benchmarks) | `false` |
 | | `--drop-weekends` | Drop weekend data points instead of forward-filling traditional stock data | `false` |
-| | `--db-path` | SQLite cache database file path | `cdg_files/cache.db` |
-| `-o` | `--output-prefix` | Output file path prefix | `cdg_files/output` |
+| | `--output-dir` | Base output directory | `cdg_files` (or `CDG_OUTPUT_DIR` env) |
+| | `--db-path` | SQLite cache database file path | `{output_dir}/cache.db` |
+| `-o` | `--output-prefix` | Output file path prefix | `{output_dir}/output` |
+| | `--raw-format` | Raw OHLCV export format (`json` or `csv`) | `json` (or `CDG_RAW_FORMAT` env) |
 | | `--seed` | Optional RNG seed for deterministic Monte Carlo simulation | `None` |
 
 ---
@@ -174,11 +176,11 @@ When there are at least two assets to compare, the program automatically runs a 
 
 ## Output Files Structure
 
-At the start of every pipeline run or standalone OHLCV retrieval, directories are created under `cdg_files/`:
+At the start of every pipeline run or standalone OHLCV retrieval, directories are created under the configured base output directory (which defaults to `cdg_files/`):
 
 ### 1. Run Directory (for pipelines)
 
-`cdg_files/run_YYYYMMDD_HHMMSS/`
+`{output_dir}/run_YYYYMMDD_HHMMSS/`
 
 Contains the complete aligned dataset, optimal weights, and generated charts:
 
@@ -190,12 +192,13 @@ cdg_files/run_20260613_091730/
 ├── efficient_frontier.png  # Scatter plot of simulated portfolios and frontier
 ├── performance.png         # Line plot comparing asset performance normalized to 100%
 ├── risk_return.png         # Scatter plot showing return mean vs volatility risk
-└── bitcoin_usd_returns.png # Returns line charts for each coin-currency pair
+├── bitcoin_usd_returns.png # Returns line charts for each coin-currency pair
+└── raw_ohlcv/              # Raw OHLCV files folder (JSON/CSV) for each coin-currency pair
 ```
 
-### 2. Raw OHLCV Directory (created for raw exports)
+### 2. Standalone Raw OHLCV Directory (for raw exports)
 
-`cdg_files/can_YYYYMMDD_HHMMSS/`
+`{output_dir}/can_YYYYMMDD_HHMMSS/`
 
 Contains raw fetched candlestick data in both JSON and CSV format for each coin-currency pair:
 

@@ -10,11 +10,11 @@ This document outlines directory structures, output layouts, deployment strategi
 
 ## 1. Directory Structure & Outputs Map
 
-CDG saves all executed pipeline data and charts into standard, timestamped directories under the `cdg_files/` folder:
+CDG saves all executed pipeline data and charts into standard, timestamped directories under the configured base output directory (defaults to `cdg_files/`):
 
 ### A. Run Directory (Pipeline Output)
 Created whenever `run-pipeline` executes:
-`cdg_files/run_YYYYMMDD_HHMMSS/`
+`{output_dir}/run_YYYYMMDD_HHMMSS/`
 
 - `data.csv`: Aligned dataset including raw prices, volume, calculated indicators, and scaled ML features.
 - `data.parquet`: Apache Parquet column-oriented format (standardized for rapid Python, Pandas, and BigQuery imports).
@@ -23,13 +23,16 @@ Created whenever `run-pipeline` executes:
 - `performance.png`: Line chart displaying cumulative asset growth/performance normalized to 100%.
 - `risk_return.png`: Scatter plot mapping expected returns against volatility risk.
 - `{coin}_{currency}_returns.png`: Daily returns line charts for each specific asset pair.
+- `raw_ohlcv/`: Directory containing raw OHLCV files (saved in the configured raw format: `.json` or `.csv`):
+  - `{coin}_{currency}.csv` (if CSV format is selected)
+  - `{coin}_{currency}.json` (if JSON format is selected)
 
-### B. Raw Candlestick Directory
-Created when executing raw candlestick (`ohlcv`) data exports:
-`cdg_files/can_YYYYMMDD_HHMMSS/`
+### B. Standalone Raw Candlestick Directory
+Created when executing standalone raw candlestick (`ohlcv`) data exports:
+`{output_dir}/can_YYYYMMDD_HHMMSS/`
 
-- `{coin}_{currency}.csv`: Raw candlestick data (timestamp, open, high, low, close).
-- `{coin}_{currency}.json`: JSON format representation of the raw OHLCV API response.
+- `{coin}_{currency}.csv` (if CSV format is selected)
+- `{coin}_{currency}.json` (if JSON format is selected)
 
 ---
 
