@@ -9,5 +9,3 @@ Unvalidated ideas. Out of scope.
 - Never implement directly from backlog.
 
 ## Items
-
-None.

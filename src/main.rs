@@ -54,9 +54,9 @@ pub enum Commands {
         #[arg(long)]
         seed: Option<u64>,
 
-        /// CoinGecko query concurrency limit (default: 3)
-        #[arg(long, env = "COINGECKO_CONCURRENCY", default_value_t = 3)]
-        concurrency: usize,
+        /// CoinGecko query concurrency limit (default: 1 for demo/free keys, 3 for pro keys)
+        #[arg(long, env = "COINGECKO_CONCURRENCY")]
+        concurrency: Option<usize>,
 
         /// Custom annualization factor override (e.g. 252 or 365)
         #[arg(long, env = "ANNUALIZATION_FACTOR")]
@@ -272,7 +272,7 @@ pub struct PipelineConfig<'a> {
     pub output_prefix: &'a str,
     pub seed: Option<u64>,
     pub cache_ttl: i64,
-    pub concurrency: usize,
+    pub concurrency: Option<usize>,
     pub annualization_factor: Option<f64>,
 }
 
@@ -292,7 +292,19 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let output_prefix = config.output_prefix;
     let seed = config.seed;
     let cache_ttl = config.cache_ttl;
-    let concurrency = config.concurrency;
+    let concurrency = config.concurrency.unwrap_or_else(|| {
+        let is_pro = std::env::var("COINGECKO_PRO_API_KEY").is_ok()
+            || (std::env::var("COINGECKO_API_KEY").is_ok()
+                && std::env::var("COINGECKO_API_KEY_TYPE")
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    == "pro");
+        if is_pro {
+            3
+        } else {
+            1
+        }
+    });
     let annualization_factor = config.annualization_factor;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -918,9 +930,23 @@ async fn run_interactive_menu(
                     seed_str.parse::<u64>().ok()
                 };
 
+                let default_concurrency = {
+                    let is_pro = std::env::var("COINGECKO_PRO_API_KEY").is_ok()
+                        || (std::env::var("COINGECKO_API_KEY").is_ok()
+                            && std::env::var("COINGECKO_API_KEY_TYPE")
+                                .unwrap_or_default()
+                                .to_lowercase()
+                                == "pro");
+                    if is_pro {
+                        3
+                    } else {
+                        1
+                    }
+                };
+
                 let concurrency: usize = dialoguer::Input::new()
                     .with_prompt("Enter Concurrency Limit")
-                    .default(3)
+                    .default(default_concurrency)
                     .interact_text()?;
 
                 let ann_factor_str: String = dialoguer::Input::new()
@@ -947,7 +973,7 @@ async fn run_interactive_menu(
                     output_prefix,
                     seed,
                     cache_ttl,
-                    concurrency,
+                    concurrency: Some(concurrency),
                     annualization_factor,
                 })
                 .await
@@ -1152,5 +1178,64 @@ mod tests {
         let args = Cli::try_parse_from(&["cdg", "--cache-ttl", "600", "ping"]).unwrap();
         assert_eq!(args.cache_ttl, 600);
         assert_eq!(args.command, Some(Commands::Ping));
+    }
+
+    #[test]
+    fn test_default_concurrency_resolution() {
+        let orig_pro = std::env::var("COINGECKO_PRO_API_KEY").ok();
+        let orig_demo = std::env::var("COINGECKO_DEMO_API_KEY").ok();
+        let orig_generic = std::env::var("COINGECKO_API_KEY").ok();
+        let orig_type = std::env::var("COINGECKO_API_KEY_TYPE").ok();
+
+        std::env::remove_var("COINGECKO_PRO_API_KEY");
+        std::env::remove_var("COINGECKO_DEMO_API_KEY");
+        std::env::remove_var("COINGECKO_API_KEY");
+        std::env::remove_var("COINGECKO_API_KEY_TYPE");
+
+        let get_default_concurrency = || {
+            let is_pro = std::env::var("COINGECKO_PRO_API_KEY").is_ok()
+                || (std::env::var("COINGECKO_API_KEY").is_ok()
+                    && std::env::var("COINGECKO_API_KEY_TYPE")
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        == "pro");
+            if is_pro {
+                3
+            } else {
+                1
+            }
+        };
+
+        // Case 1: No key -> defaults to 1
+        assert_eq!(get_default_concurrency(), 1);
+
+        // Case 2: Demo key set -> defaults to 1
+        std::env::set_var("COINGECKO_DEMO_API_KEY", "some_demo_key");
+        assert_eq!(get_default_concurrency(), 1);
+        std::env::remove_var("COINGECKO_DEMO_API_KEY");
+
+        // Case 3: Pro key set -> defaults to 3
+        std::env::set_var("COINGECKO_PRO_API_KEY", "some_pro_key");
+        assert_eq!(get_default_concurrency(), 3);
+        std::env::remove_var("COINGECKO_PRO_API_KEY");
+
+        // Case 4: Generic key set with type pro -> defaults to 3
+        std::env::set_var("COINGECKO_API_KEY", "some_key");
+        std::env::set_var("COINGECKO_API_KEY_TYPE", "pro");
+        assert_eq!(get_default_concurrency(), 3);
+
+        // Restore original env vars
+        if let Some(val) = orig_pro {
+            std::env::set_var("COINGECKO_PRO_API_KEY", val);
+        }
+        if let Some(val) = orig_demo {
+            std::env::set_var("COINGECKO_DEMO_API_KEY", val);
+        }
+        if let Some(val) = orig_generic {
+            std::env::set_var("COINGECKO_API_KEY", val);
+        }
+        if let Some(val) = orig_type {
+            std::env::set_var("COINGECKO_API_KEY_TYPE", val);
+        }
     }
 }

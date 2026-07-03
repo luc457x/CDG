@@ -2,12 +2,30 @@
 
 ## Status
 
-- State: Code review findings fully implemented, formatting checked, and tests passing.
-- Last: Implemented structural refactoring, safety checks, input validation, and test suite cleanups.
+- State: Concurrency default dynamically resolved (1 for demo/free, 3 for pro), overridable by flag/env.
+- Last: Implemented dynamic key-based concurrency limits and mock tests.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 19: Dynamic Concurrency Limit
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Implement key-aware concurrency limit defaulting (1 for demo/free keys, 3 for pro keys), overridable by CLI flag or env var.
+- Constraints: None.
+- Done:
+  - Modified `concurrency` in clap CLI parser and `PipelineConfig` to be `Option<usize>` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L58-L60).
+  - Implemented automatic CoinGecko API key support (Demo/Pro base URL and headers) in [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs#L22-L41).
+  - Implemented default concurrency resolution logic in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L290-L302) based on key presence.
+  - Updated interactive CLI menu default concurrency to adapt to key presence in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L915-L930).
+  - Added unit test `test_default_concurrency_resolution` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L1182-L1232).
+- Blocked: None.
+- Risk: None.
+- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs).
+- Verification: `cargo test` passed 39/39 tests. `cargo clippy` passed with zero errors/warnings.
+- Pending: None.
 
 ### Session 18: Implement Code Review Findings
 

@@ -16,17 +16,40 @@ pub struct CoinGeckoClient {
     cache: Arc<dyn CacheBackend>,
     base_url: String,
     ttl_secs: i64,
+    demo_key: Option<String>,
+    pro_key: Option<String>,
 }
 
 impl CoinGeckoClient {
     pub fn new(cache: Arc<dyn CacheBackend>) -> Result<Self> {
+        let mut base_url = "https://api.coingecko.com/api/v3".to_string();
+        let mut demo_key = std::env::var("COINGECKO_DEMO_API_KEY").ok();
+        let mut pro_key = std::env::var("COINGECKO_PRO_API_KEY").ok();
+
+        if demo_key.is_none() && pro_key.is_none() {
+            if let Ok(key) = std::env::var("COINGECKO_API_KEY") {
+                let key_type = std::env::var("COINGECKO_API_KEY_TYPE").unwrap_or_default();
+                if key_type.to_lowercase() == "pro" {
+                    pro_key = Some(key);
+                } else {
+                    demo_key = Some(key);
+                }
+            }
+        }
+
+        if pro_key.is_some() {
+            base_url = "https://pro-api.coingecko.com/api/v3".to_string();
+        }
+
         Ok(Self {
             client: Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                 .build()?,
             cache,
-            base_url: "https://api.coingecko.com/api/v3".to_string(),
+            base_url,
             ttl_secs: 300, // 5 minutes cache default
+            demo_key,
+            pro_key,
         })
     }
 
@@ -68,12 +91,15 @@ impl CoinGeckoClient {
 
         loop {
             // Fetch from API using reqwest's built-in query encoding
-            let response = self
-                .client
-                .get(&base_endpoint)
-                .query(query_params)
-                .send()
-                .await?;
+            let mut request_builder = self.client.get(&base_endpoint).query(query_params);
+
+            if let Some(ref key) = self.demo_key {
+                request_builder = request_builder.header("x-cg-demo-api-key", key);
+            } else if let Some(ref key) = self.pro_key {
+                request_builder = request_builder.header("x-cg-pro-api-key", key);
+            }
+
+            let response = request_builder.send().await?;
 
             let status = response.status();
 
