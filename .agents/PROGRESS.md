@@ -2,12 +2,26 @@
 
 ## Status
 
-- State: Backlog fully implemented: WAL performance settings, offline compile-time verification, parallel CoinGecko ingestion, and asset-specific annualization.
-- Last: Completed backlog implementation, added unit tests, verified offline compilations, and updated specs.
+- State: Backlog updated with Markowitz zero-weight and benchmarks separation issues.
+- Last: Added new analysis items to the backlog.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 17: Add New Items to Backlog
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Add Markowitz portfolio weight issue and benchmarks separation issue to backlog for future analysis.
+- Constraints: None.
+- Done:
+  - Added weight 0 selected coins issue and benchmarks comparison-only issue to [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md#L13-L14).
+- Blocked: None.
+- Risk: None.
+- Artifact: [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md).
+- Verification: File reviewed.
+- Pending: None.
 
 ### Session 16: Implement Backlog Items
 
