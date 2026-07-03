@@ -1,8 +1,23 @@
 # CryptoDataGather (CDG)
 
-A robust, modular, and performance-efficient Rust application and library to collect, cache, and pre-process market data from CoinGecko (cryptocurrency) and Yahoo Finance (traditional stock benchmarks).
+[🏠 Home](README.md) • [📖 Overview](doc/README.md) • [🏗️ Architecture](doc/architecture.md) • [💻 Setup](doc/installation_usage.md) • [🔌 API & Cache](doc/api_cache.md) • [📊 Processing & Optimization](doc/analysis_optimization.md) • [🚀 Deployment](doc/deployment.md)
+
+---
+
+A robust, modular, and performance-efficient Rust application/library to collect, cache, and pre-process market data from CoinGecko (cryptocurrency) and Yahoo Finance (traditional stock benchmarks).
 
 This project has been implemented in Rust, optimizing hosting footprint and data alignment speed while utilizing `polars` for fast DataFrames operations and `plotters` for generating charts.
+
+## 📖 Documentation
+
+A comprehensive set of modular guides is available under the `doc/` directory:
+
+- **[Overview & Documentation Hub](doc/README.md)**
+- **[System Architecture](doc/architecture.md)**
+- **[Setup & CLI Usage Guide](doc/installation_usage.md)**
+- **[API Clients & SQLite Caching](doc/api_cache.md)**
+- **[Feature Engineering & Portfolio Math](doc/analysis_optimization.md)**
+- **[Deployment & Cloud Operations](doc/deployment.md)**
 
 ## Features
 
@@ -16,7 +31,6 @@ This project has been implemented in Rust, optimizing hosting footprint and data
 - **Portfolio Optimization**: Runs annualized Monte Carlo portfolio simulation to determine Max Sharpe Ratio and Minimum Volatility weights.
 - **CLI Polish**: Integrates real-time progress feedback (spinners/progress bars) and logs final optimal portfolios in clean ASCII tables.
 - **Clean Architecture**: Compiles as both a CLI tool (`cdg`) and a reusable library (`cdg`).
-
 
 ## Installation
 
@@ -33,35 +47,49 @@ cargo build --release
 Run the compiled binary using `cargo run`.
 
 ### Interactive Menu Mode
+
 If run without any subcommand, the program launches the **Interactive Menu Mode**, providing a terminal UI to select and configure actions (e.g. running the pipeline, pinging servers, listing coins, checking coin IDs, and getting raw OHLCV data):
+
 ```bash
 cargo run
 ```
 
 ### CLI Subcommands
+
 For automation and scripting, the following subcommands are supported:
 
 - **run-pipeline**: Runs the data collection, alignment, indicators computation, and portfolio optimization pipeline:
+
   ```bash
   cargo run -- run-pipeline -c bitcoin,ethereum -v usd -d 90
   ```
+
 - **ping**: Pings CoinGecko and Yahoo Finance API servers to verify connectivity:
+
   ```bash
   cargo run -- ping
   ```
+
 - **list-coins**: Fetches and displays the top 50 cryptocurrencies by market cap (USD):
+
   ```bash
   cargo run -- list-coins
   ```
+
 - **trending**: Shows the current trending search coins on CoinGecko:
+
   ```bash
   cargo run -- trending
   ```
+
 - **ohlcv**: Fetches and prints/exports raw candlestick data:
+
   ```bash
   cargo run -- ohlcv -c bitcoin -v usd --days 30 --format csv
   ```
+
 - **check-coin**: Validates a CoinGecko ID and suggests close matches if invalid:
+
   ```bash
   cargo run -- check-coin --coin bnb
   ```
@@ -86,9 +114,10 @@ For automation and scripting, the following subcommands are supported:
 
 ### 1. Machine Learning Preprocessing (`--prep-ml`)
 
-When run with the `--prep-ml` flag, the pipeline generates normalized features for downstream model training (e.g., PyTorch, TensorFlow, or Scikit-Learn). 
+When run with the `--prep-ml` flag, the pipeline generates normalized features for downstream model training (e.g., PyTorch, TensorFlow, or Scikit-Learn).
 
 **Important Behavior:**
+
 - It does **not** overwrite or normalize your original columns in-place.
 - Instead, it **creates two new columns** for every numerical column `{name}` in the aligned dataset (except the `date` column) using two separate normalization strategies:
   1. **MinMax Scaling (`{name}_minmax`)**:
@@ -103,6 +132,7 @@ When run with the `--prep-ml` flag, the pipeline generates normalized features f
 ### 2. Caching Layer & Timestamp Alignment
 
 The SQLite cache avoids rate limit blocks (429 errors) and speeds up repeated runs:
+
 - Request URLs are hashed and stored in the SQLite database with their response bodies.
 - A default 5-minute Time-To-Live (TTL) is enforced.
 - **Timestamp Boundary Alignment:** To make cache hits reliable across multiple runs throughout the same day, start and end timestamps for API range requests are rounded to the nearest daily boundary (e.g. `00:00:00 UTC`). This ensures that the generated query URL remains identical and hits the cache rather than triggering a new network request.
@@ -111,12 +141,14 @@ The SQLite cache avoids rate limit blocks (429 errors) and speeds up repeated ru
 ### 3. Weekend Gap Alignment (`--drop-weekends`)
 
 Cryptocurrency markets trade 24/7, while traditional stock markets (e.g., S&P 500) close on weekends. To merge them:
+
 - **Default (Forward-Fill):** The traditional stock benchmarks copy Friday's closing values over to Saturday and Sunday. This aligns the datasets without losing weekend cryptocurrency data points.
 - **Drop Weekends (`--drop-weekends`):** Any Saturday and Sunday rows are completely removed from the aligned DataFrame. Traditional benchmark data remains aligned directly to weekdays.
 
 ### 4. Technical Indicators Calculations
 
 For all coin-currency combinations, the library calculates high-performance technical indicators via `polars`:
+
 - **Returns**: Simple return and logarithmic return.
 - **Moving Averages**: 20-period Simple Moving Average (SMA) and Exponential Moving Average (EMA).
 - **RSI**: 14-period Relative Strength Index (Wilder's smoothing).
@@ -131,6 +163,7 @@ For all coin-currency combinations, the library calculates high-performance tech
 ### 5. Portfolio Optimization & Markowitz Monte Carlo
 
 When there are at least two assets to compare, the program automatically runs a Monte Carlo simulation of 10,000 random portfolios:
+
 - **Expected Return and Volatility**: Calculations are annualized (using a standard 365-day year assumption for cryptocurrency assets).
 - **Optimization Outputs**:
   - **Max Sharpe Ratio**: The portfolio maximizing expected excess returns per unit of volatility (assuming risk-free rate = 0).
@@ -144,10 +177,12 @@ When there are at least two assets to compare, the program automatically runs a 
 At the start of every pipeline run or standalone OHLCV retrieval, directories are created under `cdg_files/`:
 
 ### 1. Run Directory (for pipelines)
+
 `cdg_files/run_YYYYMMDD_HHMMSS/`
 
 Contains the complete aligned dataset, optimal weights, and generated charts:
-```
+
+```text
 cdg_files/run_20260613_091730/
 ├── data.csv                # Complete aligned dataset (prices, indicators, scaled features)
 ├── data.parquet            # Parquet format of the aligned dataset (optimized for Pandas/ML)
@@ -159,10 +194,12 @@ cdg_files/run_20260613_091730/
 ```
 
 ### 2. Raw OHLCV Directory (created for raw exports)
+
 `cdg_files/can_YYYYMMDD_HHMMSS/`
 
 Contains raw fetched candlestick data in both JSON and CSV format for each coin-currency pair:
-```
+
+```text
 cdg_files/can_20260613_091730/
 ├── bitcoin_usd.csv         # Raw OHLCV data in CSV format (timestamp, open, high, low, close)
 └── bitcoin_usd.json        # Raw OHLCV data in JSON format

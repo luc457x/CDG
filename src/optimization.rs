@@ -209,7 +209,7 @@ pub fn run_monte_carlo(
 
         if ann_vol_pct < min_vol_portfolio.annualized_volatility {
             min_vol_portfolio = Portfolio {
-                weights: weights,
+                weights,
                 annualized_return: ann_ret_pct,
                 annualized_volatility: ann_vol_pct,
                 sharpe_ratio: sharpe,

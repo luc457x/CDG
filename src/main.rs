@@ -14,6 +14,10 @@ pub struct Cli {
     #[arg(short, long, default_value = "cdg_files/output")]
     pub output_prefix: String,
 
+    /// Cache TTL in seconds (default: 300)
+    #[arg(long, default_value_t = 300)]
+    pub cache_ttl: i64,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -113,13 +117,16 @@ async fn main() -> Result<()> {
                 &args.db_path,
                 &args.output_prefix,
                 seed,
+                args.cache_ttl,
             )
             .await?;
         }
         Some(Commands::Ping) => {
             let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
-            let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
-            let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?;
+            let cg_client =
+                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+            let yahoo_client =
+                api::yahoo::YahooClient::new(cache.clone())?.with_ttl(args.cache_ttl);
 
             println!("Pinging CoinGecko API...");
             match cg_client.ping().await {
@@ -135,7 +142,8 @@ async fn main() -> Result<()> {
         }
         Some(Commands::ListCoins) => {
             let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
-            let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
+            let cg_client =
+                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             println!("Fetching top 50 coins by market cap (USD)...");
             let coins = cg_client.get_coins_markets("usd", 50).await?;
             println!(
@@ -164,7 +172,8 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Trending) => {
             let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
-            let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
+            let cg_client =
+                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             println!("Fetching trending coins...");
             let val = cg_client.get_search_trending().await?;
             if let Some(coins) = val.get("coins").and_then(|v| v.as_array()) {
@@ -192,7 +201,8 @@ async fn main() -> Result<()> {
             format,
         }) => {
             let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
-            let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
+            let cg_client =
+                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             run_ohlcv_flow(
                 &cg_client,
                 &coin,
@@ -205,7 +215,8 @@ async fn main() -> Result<()> {
         }
         Some(Commands::CheckCoin { coin }) => {
             let cache = std::sync::Arc::new(cache::Cache::new(&args.db_path).await?);
-            let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
+            let cg_client =
+                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
             println!("Checking CoinGecko ID for '{}'...", coin);
             match cg_client.check_coin_id(&coin).await {
                 Ok(None) => {
@@ -231,7 +242,7 @@ async fn main() -> Result<()> {
             }
         }
         None => {
-            run_interactive_menu(&args.db_path, &args.output_prefix).await?;
+            run_interactive_menu(&args.db_path, &args.output_prefix, args.cache_ttl).await?;
         }
     }
 
@@ -249,6 +260,7 @@ async fn run_pipeline_flow(
     db_path: &str,
     output_prefix: &str,
     seed: Option<u64>,
+    cache_ttl: i64,
 ) -> Result<()> {
     // Lightweight override
     if light {
@@ -282,8 +294,8 @@ async fn run_pipeline_flow(
     let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
 
     // 2. Initialize Clients
-    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
-    let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?;
+    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(cache_ttl);
+    let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?.with_ttl(cache_ttl);
 
     // 3. Ping CoinGecko
     match cg_client.ping().await {
@@ -716,10 +728,14 @@ fn wait_for_back() {
         .interact_opt();
 }
 
-async fn run_interactive_menu(db_path: &str, output_prefix: &str) -> Result<()> {
+async fn run_interactive_menu(
+    db_path: &str,
+    output_prefix: &str,
+    mut cache_ttl: i64,
+) -> Result<()> {
     let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
-    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?;
-    let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?;
+    let mut cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(cache_ttl);
+    let mut yahoo_client = api::yahoo::YahooClient::new(cache.clone())?.with_ttl(cache_ttl);
 
     loop {
         clear_terminal();
@@ -731,6 +747,7 @@ async fn run_interactive_menu(db_path: &str, output_prefix: &str) -> Result<()> 
             "Show Trending Coins",
             "Get Raw OHLCV Data",
             "Check Coin ID",
+            "Configure Cache TTL",
             "Exit",
         ];
 
@@ -805,6 +822,7 @@ async fn run_interactive_menu(db_path: &str, output_prefix: &str) -> Result<()> 
                     db_path,
                     output_prefix,
                     seed,
+                    cache_ttl,
                 )
                 .await
                 {
@@ -944,6 +962,16 @@ async fn run_interactive_menu(db_path: &str, output_prefix: &str) -> Result<()> 
                     }
                 }
             }
+            "Configure Cache TTL" => {
+                let new_ttl: i64 = dialoguer::Input::new()
+                    .with_prompt("Enter new Cache TTL in seconds")
+                    .default(cache_ttl)
+                    .interact_text()?;
+                cache_ttl = new_ttl;
+                cg_client = cg_client.with_ttl(cache_ttl);
+                yahoo_client = yahoo_client.with_ttl(cache_ttl);
+                println!("Cache TTL set to {} seconds.", cache_ttl);
+            }
             "Exit" => {
                 println!("Goodbye!");
                 break;
@@ -991,5 +1019,12 @@ mod tests {
                 ..
             }) if coin == "bitcoin,ethereum" && currency == "usd"
         ));
+    }
+
+    #[test]
+    fn test_cli_parsing_cache_ttl() {
+        let args = Cli::try_parse_from(&["cdg", "--cache-ttl", "600", "ping"]).unwrap();
+        assert_eq!(args.cache_ttl, 600);
+        assert_eq!(args.command, Some(Commands::Ping));
     }
 }
