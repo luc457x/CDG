@@ -137,7 +137,7 @@ impl CoinGeckoClient {
     }
 
     pub async fn ping(&self) -> Result<Value> {
-        let res = self.get_request("/ping", &[], false).await?;
+        let res = self.get_request("/ping", &[], true).await?;
         Ok(serde_json::from_str(&res)?)
     }
 
