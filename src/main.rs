@@ -771,10 +771,65 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
     pb.finish_with_message("Data fetching and processing complete.");
 
-    // 12. Strategy Backtesting
+    // 12. Portfolio Optimization (Markowitz Monte Carlo)
+    let mut opt_res_opt = None;
+    if currency_cols.len() >= 2 {
+        println!("\n==================================================");
+        println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
+        println!("==================================================");
+
+        let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
+
+        match cdg::optimization::run_monte_carlo(&final_df, &currency_cols, final_ann_factor, 10000, seed) {
+            Ok(opt_res) => {
+                println!("\nOptimal Portfolio Formulations (Annualized):");
+                let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
+                println!("{}", metrics_table);
+
+                println!("\nOptimal Asset Weights:");
+                let weights_table =
+                    cdg::optimization::format_optimal_weights_table(&currency_cols, &opt_res);
+                println!("{}", weights_table);
+
+                // Save weights CSV
+                let weights_path = format!("{}/portfolio_weights.csv", run_dir);
+                let mut w_file = std::fs::File::create(&weights_path)?;
+                writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
+                for (i, asset) in currency_cols.iter().enumerate() {
+                    writeln!(
+                        w_file,
+                        "{},{:.6},{:.6}",
+                        asset, opt_res.max_sharpe.weights[i], opt_res.min_volatility.weights[i]
+                    )?;
+                }
+                println!("Portfolio weights saved to: {}", weights_path);
+
+                // Plot efficient frontier
+                let ef_plot_path = format!("{}/efficient_frontier.png", run_dir);
+                println!("Saving efficient frontier plot to: {}", ef_plot_path);
+                if let Err(e) = plot::plot_efficient_frontier(
+                    &opt_res.simulated_points,
+                    &opt_res.max_sharpe,
+                    &opt_res.min_volatility,
+                    &ef_plot_path,
+                ) {
+                    println!("Warning: Failed to generate efficient frontier plot: {}", e);
+                }
+
+                opt_res_opt = Some(opt_res);
+            }
+            Err(e) => {
+                println!("Error running portfolio optimization: {}", e);
+            }
+        }
+    } else {
+        println!("\nSkipping portfolio optimization (requires at least 2 assets).");
+    }
+
+    // 13. Strategy & Portfolio Backtesting
     if backtest {
         println!("\n==================================================");
-        println!("RUNNING STRATEGY BACKTESTING");
+        println!("RUNNING STRATEGY & PORTFOLIO BACKTESTING");
         println!("==================================================");
         let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
@@ -785,6 +840,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             vec![strategy.to_lowercase()]
         };
 
+        // 1. Backtest individual assets
         for col in &currency_cols {
             for strat in &strats {
                 match cdg::backtest::run_backtest_for_asset(
@@ -824,6 +880,73 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             }
         }
 
+        // 2. Backtest optimized portfolios if available
+        if let Some(ref opt_res) = opt_res_opt {
+            let dates: Vec<String> = final_df
+                .column("date")?
+                .str()?
+                .into_iter()
+                .map(|opt| opt.unwrap_or("").to_string())
+                .collect();
+
+            // Max Sharpe Portfolio
+            match cdg::backtest::backtest_portfolio(
+                &final_df,
+                &currency_cols,
+                &opt_res.max_sharpe.weights,
+                "max_sharpe",
+                final_ann_factor,
+            ) {
+                Ok((metrics, equity, bh_equity)) => {
+                    backtest_metrics.push(metrics);
+
+                    let plot_path = format!("{}/max_sharpe_portfolio_rebalanced_backtest.png", run_dir);
+                    if let Err(e) = cdg::plot::plot_backtest_equity(
+                        &dates,
+                        &equity,
+                        &bh_equity,
+                        "max_sharpe",
+                        "portfolio",
+                        &plot_path,
+                    ) {
+                        println!("Warning: Failed to generate backtest equity plot for max_sharpe portfolio: {}", e);
+                    }
+                }
+                Err(e) => {
+                    println!("Warning: Portfolio backtest failed for max_sharpe: {}", e);
+                }
+            }
+
+            // Min Volatility Portfolio
+            match cdg::backtest::backtest_portfolio(
+                &final_df,
+                &currency_cols,
+                &opt_res.min_volatility.weights,
+                "min_volatility",
+                final_ann_factor,
+            ) {
+                Ok((metrics, equity, bh_equity)) => {
+                    backtest_metrics.push(metrics);
+
+                    let plot_path = format!("{}/min_vol_portfolio_rebalanced_backtest.png", run_dir);
+                    if let Err(e) = cdg::plot::plot_backtest_equity(
+                        &dates,
+                        &equity,
+                        &bh_equity,
+                        "min_volatility",
+                        "portfolio",
+                        &plot_path,
+                    ) {
+                        println!("Warning: Failed to generate backtest equity plot for min_volatility portfolio: {}", e);
+                    }
+                }
+                Err(e) => {
+                    println!("Warning: Portfolio backtest failed for min_volatility: {}", e);
+                }
+            }
+        }
+
+        // 3. Print consolidated table and save reports
         if !backtest_metrics.is_empty() {
             let backtest_table = cdg::backtest::format_backtest_table(&backtest_metrics);
             println!("\nBacktest Summary Results:");
@@ -877,58 +1000,6 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 }
             }
         }
-    }
-
-    // 13. Portfolio Optimization (Markowitz Monte Carlo)
-    if currency_cols.len() >= 2 {
-        println!("\n==================================================");
-        println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
-        println!("==================================================");
-
-        let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
-
-        match cdg::optimization::run_monte_carlo(&final_df, &currency_cols, final_ann_factor, 10000, seed) {
-            Ok(opt_res) => {
-                println!("\nOptimal Portfolio Formulations (Annualized):");
-                let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
-                println!("{}", metrics_table);
-
-                println!("\nOptimal Asset Weights:");
-                let weights_table =
-                    cdg::optimization::format_optimal_weights_table(&currency_cols, &opt_res);
-                println!("{}", weights_table);
-
-                // Save weights CSV
-                let weights_path = format!("{}/portfolio_weights.csv", run_dir);
-                let mut w_file = std::fs::File::create(&weights_path)?;
-                writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
-                for (i, asset) in currency_cols.iter().enumerate() {
-                    writeln!(
-                        w_file,
-                        "{},{:.6},{:.6}",
-                        asset, opt_res.max_sharpe.weights[i], opt_res.min_volatility.weights[i]
-                    )?;
-                }
-                println!("Portfolio weights saved to: {}", weights_path);
-
-                // Plot efficient frontier
-                let ef_plot_path = format!("{}/efficient_frontier.png", run_dir);
-                println!("Saving efficient frontier plot to: {}", ef_plot_path);
-                if let Err(e) = plot::plot_efficient_frontier(
-                    &opt_res.simulated_points,
-                    &opt_res.max_sharpe,
-                    &opt_res.min_volatility,
-                    &ef_plot_path,
-                ) {
-                    println!("Warning: Failed to generate efficient frontier plot: {}", e);
-                }
-            }
-            Err(e) => {
-                println!("Error running portfolio optimization: {}", e);
-            }
-        }
-    } else {
-        println!("\nSkipping portfolio optimization (requires at least 2 assets).");
     }
 
     println!("CDG data pipeline completed successfully!");

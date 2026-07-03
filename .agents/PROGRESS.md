@@ -2,12 +2,29 @@
 
 ## Status
 
-- State: Completed portfolio optimization fixes, strategy backtesting engine, CLI and interactive integrations, and PNG equity chart generation.
-- Last: Implemented standalone backtest CLI command, strategy plotting, and verified all 41 cargo tests pass.
+- State: Completed portfolio backtest simulation and consolidation of all backtest results (individual assets and portfolios) in tables and files.
+- Last: Integrated Max Sharpe and Min Volatility portfolio backtests, verified math compounding, and checked file chart generation.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 24: Backtest Optimized Portfolios
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Backtest the optimized Markowitz Monte Carlo portfolios and compare their performance against individual asset strategies.
+- Constraints: None.
+- Done:
+  - Implemented `backtest_portfolio` function in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L507-L642) simulating Daily Rebalanced strategy and Buy & Hold baseline.
+  - Aligned starting index with indicator warm-up period to ensure comparable timeframes.
+  - Reorganized pipeline flow in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs) to optimize first, then run asset and portfolio backtests, consolidating metrics.
+  - Added portfolio backtest PNG charts plotting and consolidated CSV/JSON report exports.
+- Blocked: None.
+- Risk: None.
+- Artifact: [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
+- Verification: `cargo test` - 42 tests passed. Aligned rebalancing portfolio backtest validated successfully on command line.
+- Pending: None.
 
 ### Session 23: Portfolio Covariance & Backtest Integration
 
@@ -27,32 +44,3 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 - Verification: `cargo test` - 41 tests passed. Standalone backtest and pipeline backtest verified on command line and generated output files successfully.
 - Pending: None.
 
-### Session 22: Cache Connection Ping Requests
-
-- Date: 2026-07-03
-- Agent: Antigravity
-- Goal: Cache connection ping requests to prevent API rate limit (429) errors on subsequent runs.
-- Constraints: None.
-- Done:
-  - Enabled caching for CoinGecko ping requests in [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs#L139-L143).
-  - Enabled caching for Yahoo Finance ping requests by rounding timestamps to the hour in [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs#L65-L71).
-- Blocked: None.
-- Risk: None.
-- Artifact: [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs), [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs).
-- Verification: `cargo test` (41 tests passed), and verified subsequent CLI runs execute without hitting network for `/ping` endpoints.
-- Pending: None.
-
-### Session 21: Resolve Markowitz Weights Convergence
-
-- Date: 2026-07-03
-- Agent: Antigravity
-- Goal: Fix Markowitz Monte Carlo simulation producing identical weights due to correlated Xorshift seeds.
-- Constraints: None.
-- Done:
-  - Implemented `splitmix64` hash helper in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L44-L50).
-  - Hashed the Monte Carlo index seeds in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L169-L171) to ensure high-entropy/diverse weight outputs.
-- Blocked: None.
-- Risk: None.
-- Artifact: [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs).
-- Verification: `cargo test` (41 tests passed), and run-pipeline smoke test verifying different weights (e.g. 1.03% vs 98.84% BTC).
-- Pending: None.

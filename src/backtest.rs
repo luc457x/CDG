@@ -504,6 +504,149 @@ pub fn format_backtest_table(metrics: &[BacktestMetrics]) -> String {
     }
 }
 
+pub fn backtest_portfolio(
+    df: &DataFrame,
+    assets: &[String],
+    weights: &[f64],
+    portfolio_name: &str,
+    annualization_factor: f64,
+) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
+    let n_assets = assets.len();
+    if n_assets == 0 || weights.len() != n_assets {
+        return Err(anyhow!("Mismatched or empty assets/weights for portfolio backtest"));
+    }
+
+    let n_rows = df.height();
+    if n_rows < 2 {
+        return Err(anyhow!("DataFrame too short for portfolio backtest"));
+    }
+
+    // Extract close prices and daily simple returns for each asset
+    let mut close_series = Vec::new();
+    let mut returns_series = Vec::new();
+    for asset in assets {
+        let close: Vec<f64> = df
+            .column(asset)?
+            .f64()?
+            .into_iter()
+            .map(|opt| opt.unwrap_or(0.0))
+            .collect();
+        let ret: Vec<f64> = df
+            .column(&format!("{}_simple_return", asset))?
+            .f64()?
+            .into_iter()
+            .map(|opt| opt.unwrap_or(0.0))
+            .collect();
+        close_series.push(close);
+        returns_series.push(ret);
+    }
+
+    // Find the first index where close prices > 0.0 and indicator columns are valid (non-null) if they exist
+    let mut start_idx = 0;
+    for i in 0..n_rows {
+        let mut all_valid = true;
+        for j in 0..n_assets {
+            if close_series[j][i] <= 0.0 {
+                all_valid = false;
+                break;
+            }
+            let asset = &assets[j];
+            let rsi_col = format!("{}_rsi_14", asset);
+            if let Ok(col) = df.column(&rsi_col) {
+                if col.f64()?.get(i).is_none() {
+                    all_valid = false;
+                    break;
+                }
+            }
+        }
+        if all_valid {
+            start_idx = i;
+            break;
+        }
+    }
+
+    if start_idx >= n_rows - 1 {
+        return Err(anyhow!("No overlapping price data for portfolio backtest"));
+    }
+
+    // Initialize equity curves
+    let mut equity = vec![10000.0; n_rows];
+    let mut bh_equity = vec![10000.0; n_rows];
+
+    // Store the initial close prices at start_idx to calculate Buy & Hold weights drift
+    let initial_prices: Vec<f64> = (0..n_assets)
+        .map(|j| close_series[j][start_idx])
+        .collect();
+
+    // Fill equity curves from start_idx onwards
+    for i in (start_idx + 1)..n_rows {
+        // Daily rebalanced portfolio return (compounded as decimal, simple returns are in %)
+        let mut daily_ret = 0.0;
+        for j in 0..n_assets {
+            let asset_ret = returns_series[j][i];
+            daily_ret += weights[j] * asset_ret;
+        }
+        equity[i] = equity[i - 1] * (1.0 + daily_ret / 100.0);
+
+        // Buy & Hold (no rebalancing) portfolio return
+        let mut bh_val = 0.0;
+        for j in 0..n_assets {
+            let curr_price = close_series[j][i];
+            let asset_ratio = curr_price / initial_prices[j];
+            bh_val += weights[j] * asset_ratio;
+        }
+        bh_equity[i] = 10000.0 * bh_val;
+    }
+
+    // Calculate returns for Sharpe ratio calculation
+    let mut strat_returns = Vec::new();
+    let mut bh_returns = Vec::new();
+    for i in (start_idx + 1)..n_rows {
+        let prev_e = equity[i - 1];
+        let curr_e = equity[i];
+        strat_returns.push((curr_e - prev_e) / prev_e);
+
+        let prev_bh = bh_equity[i - 1];
+        let curr_bh = bh_equity[i];
+        bh_returns.push((curr_bh - prev_bh) / prev_bh);
+    }
+
+    let final_strat_return = ((equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
+    let final_bh_return = ((bh_equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
+
+    let strat_sharpe = calculate_sharpe(&strat_returns, annualization_factor);
+    let bh_sharpe = calculate_sharpe(&bh_returns, annualization_factor);
+
+    let strat_drawdown = calculate_max_drawdown(&equity[start_idx..n_rows]) * 100.0;
+    let bh_drawdown = calculate_max_drawdown(&bh_equity[start_idx..n_rows]) * 100.0;
+
+    let strategy_rating = classify_strategy_rating(strat_sharpe, final_strat_return, final_bh_return);
+
+    let metrics = BacktestMetrics {
+        coin: portfolio_name.to_string(),
+        currency: "portfolio".to_string(),
+        strategy: "rebalanced".to_string(),
+        strategy_return: final_strat_return,
+        buy_and_hold_return: final_bh_return,
+        strategy_sharpe: strat_sharpe,
+        buy_and_hold_sharpe: bh_sharpe,
+        strategy_max_drawdown: strat_drawdown,
+        buy_and_hold_max_drawdown: bh_drawdown,
+        prediction_accuracy: 1.0,
+        prediction_r2: 0.0,
+        active_win_rate: 1.0,
+        prediction_rating: "N/A".to_string(),
+        strategy_rating,
+        true_positives: 0,
+        false_positives: 0,
+        true_negatives: 0,
+        false_negatives: 0,
+        total_trades: 0,
+    };
+
+    Ok((metrics, equity, bh_equity))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,5 +707,28 @@ mod tests {
         // Bollinger strategy
         let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", 0.001, 0.0005, 365.0).unwrap();
         assert_eq!(metrics_bb.strategy, "bollinger");
+    }
+
+    #[test]
+    fn test_backtest_portfolio() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
+            Series::new("bitcoin_usd_simple_return", vec![0.0, 0.05, -0.0952, 0.1579]),
+            Series::new("ethereum_usd", vec![10.0, 11.0, 9.5, 12.0]),
+            Series::new("ethereum_usd_simple_return", vec![0.0, 0.10, -0.1363, 0.2631]),
+        ]).unwrap();
+
+        let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
+        let weights = vec![0.6, 0.4];
+
+        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0).unwrap();
+        assert_eq!(metrics.coin, "max_sharpe");
+        assert_eq!(metrics.currency, "portfolio");
+        assert_eq!(metrics.strategy, "rebalanced");
+        assert_eq!(equity.len(), 4);
+        assert_eq!(bh_equity.len(), 4);
+        assert!(metrics.strategy_return != 0.0);
+        assert!(metrics.buy_and_hold_return != 0.0);
     }
 }

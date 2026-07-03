@@ -62,6 +62,7 @@ Port the python CoinGecko and Yahoo Finance data collector to a robust, modular,
 - **FR19 (Asset-Specific Annualization)**: Portfolio expected returns and volatilities must be annualized using dynamic factors (365.0 for Crypto, 252.0 for Traditional stocks/benchmarks). An override CLI flag `--annualization-factor` or env var `ANNUALIZATION_FACTOR` can override all factors to a single custom value.
 - **FR20 (Configurable Output Directory)**: The application must support a configurable base output directory `--output-dir` (default: `cdg_files`) and environment variable `CDG_OUTPUT_DIR`. All run and candlestick outputs, as well as the default SQLite database path and default output prefix, must resolve dynamically relative to this output directory.
 - **FR21 (Configurable Raw Format)**: The application must support a configurable raw format option `--raw-format` (default: `json`) and environment variable `CDG_RAW_FORMAT`, supporting `json` and `csv`. All raw OHLCV files saved during pipeline runs or standalone OHLCV retrieval must be generated in this format only.
+- **FR22 (Portfolio Backtesting)**: When strategy backtesting is enabled and the portfolio has 2 or more assets, the pipeline must also backtest the optimized `Max Sharpe` and `Min Volatility` portfolios using target weights. Rebalancing return must be simulated and compared against a non-rebalanced Buy & Hold baseline.
 
 
 ## 5. Business Rules (BR)
