@@ -27,7 +27,7 @@ If running manually:
 3. **Verify and Update `.gitignore`**:
    - Ensure `AGENTS.md`, `.agentignore`, `.agents/` uncommented in `.gitignore`.
    - If changed, commit update on `main`.
-4. **Untrack AI Files**: 
+4. **Untrack AI Files**:
    - If AI docs tracked on `main`, run `git rm -r --cached .agents AGENTS.md .agentignore --ignore-unmatch`.
    - Commit: `git commit -m "chore: untrack AI documentation on main"`
 5. **Merge Branch**:
