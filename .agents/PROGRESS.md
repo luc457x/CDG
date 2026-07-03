@@ -2,12 +2,31 @@
 
 ## Status
 
-- State: Completed portfolio backtest simulation and consolidation of all backtest results (individual assets and portfolios) in tables and files.
-- Last: Integrated Max Sharpe and Min Volatility portfolio backtests, verified math compounding, and checked file chart generation.
+- State: Code review findings implemented (covariance math, volume filling, JSON cache checks, Yahoo client retries, dead code removed).
+- Last: Implemented date-aligned returns calculation, Zero volume fill strategy, JSON body caching validation, Yahoo retry loop, and cleaned up dead code.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 25: Implement Code Review Findings
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Implement codebase refactors and correctness enhancements based on deep code review findings.
+- Constraints: None.
+- Done:
+  - Fixed covariance misalignment bug in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L64-L100) by extracting aligned prices synchronously.
+  - Corrected weekend gap volume fill strategy in [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs#L316-L328) to fill nulls with 0.0 instead of forward-filling.
+  - Added JSON validation checks before caching in [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs#L128-L136) and [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs#L85-L101).
+  - Implemented exponential backoff retry loop in Yahoo client [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs#L50-L107) for API request resilience.
+  - Cleaned up dead strategy returns code in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L145-L171).
+  - Added unit tests `test_align_datasets_volume_filling` and `test_covariance_date_alignment` in [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs#L129-L153).
+- Blocked: None.
+- Risk: None.
+- Artifact: [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs), [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs), [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs).
+- Verification: `cargo test` - 44 tests passed (including 2 new tests). Pipeline execution manually verified end-to-end.
+- Pending: None.
 
 ### Session 24: Backtest Optimized Portfolios
 

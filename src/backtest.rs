@@ -142,34 +142,6 @@ pub fn classify_strategy_rating(
     }
 }
 
-pub fn calculate_strategy_return(
-    signal: i64,
-    prev_signal: i64,
-    actual_return: f64,
-    predicted_return: f64,
-    transaction_fee: f64,
-    slippage: f64,
-) -> f64 {
-    let raw_strat_ret = if signal == 2 {
-        actual_return
-    } else if signal == 0 {
-        -actual_return
-    } else {
-        0.0
-    };
-
-    let confidence_multiplier = (predicted_return.abs() / 0.5).clamp(0.0, 1.0);
-    let scaled_return = raw_strat_ret * confidence_multiplier;
-
-    let cost = if signal != prev_signal {
-        transaction_fee + slippage
-    } else {
-        0.0
-    };
-
-    scaled_return - cost
-}
-
 pub fn calculate_confusion_matrix(
     signals: &[i64],
     actuals: &[f64],

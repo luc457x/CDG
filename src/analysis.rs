@@ -316,10 +316,14 @@ pub fn align_datasets(
 
     for name in &column_names {
         if name != "date" {
-            let filled = df
-                .column(name)?
-                .fill_null(FillNullStrategy::Forward(None))?
-                .fill_null(FillNullStrategy::Backward(None))?;
+            let filled = if name.ends_with("_volume") {
+                df.column(name)?
+                    .fill_null(FillNullStrategy::Zero)?
+            } else {
+                df.column(name)?
+                    .fill_null(FillNullStrategy::Forward(None))?
+                    .fill_null(FillNullStrategy::Backward(None))?
+            };
             df.replace(name, filled)?;
         }
     }

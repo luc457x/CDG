@@ -125,3 +125,31 @@ fn test_full_pipeline_smoke() {
     assert!(min_mm >= 0.0 - 1e-9, "minmax min should be >= 0");
     assert!(max_mm <= 1.0 + 1e-9, "minmax max should be <= 1");
 }
+
+#[test]
+fn test_align_datasets_volume_filling() {
+    let base_df = DataFrame::new(vec![
+        Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03"]),
+        Series::new("bitcoin_usd", vec![60000.0, 61000.0, 62000.0]),
+        Series::new("bitcoin_usd_volume", vec![Some(100.0), None, Some(150.0)]),
+    ])
+    .unwrap();
+
+    let aligned = analysis::align_datasets(&base_df, &[], false).unwrap();
+    let vol = aligned.column("bitcoin_usd_volume").unwrap().f64().unwrap();
+    assert_eq!(vol.get(1), Some(0.0)); // Should be 0.0, not forward-filled 100.0!
+}
+
+#[test]
+fn test_covariance_date_alignment() {
+    let df = DataFrame::new(vec![
+        Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+        Series::new("asset_a", vec![100.0, 0.0, 102.0, 104.0]),
+        Series::new("asset_b", vec![10.0, 12.0, 15.0, 20.0]),
+    ])
+    .unwrap();
+
+    let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
+    let res = run_monte_carlo(&df, &assets, 365.0, 100, Some(42)).unwrap();
+    assert_eq!(res.simulated_points.len(), 100);
+}

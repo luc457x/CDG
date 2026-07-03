@@ -64,28 +64,49 @@ pub fn run_monte_carlo(
         return Err(anyhow!("Insufficient data rows for covariance calculation"));
     }
 
-    // 1. Extract prices and compute simple returns
-    let mut returns = Vec::with_capacity(m);
+    // 1. Extract prices and compute simple returns synchronously
+    let mut columns = Vec::with_capacity(m);
     for asset in assets {
-        let series = df.column(asset)?;
-        // Filter to non-null prices only to avoid fake zero-price spikes corrupting returns
-        let prices: Vec<f64> = series
-            .f64()?
-            .into_iter()
-            .flatten()
-            .filter(|&p| p > 0.0)
-            .collect();
+        columns.push(df.column(asset)?.f64()?);
+    }
 
-        let mut asset_returns = Vec::with_capacity(prices.len().saturating_sub(1));
-        for i in 1..prices.len() {
-            let prev = prices[i - 1];
-            asset_returns.push((prices[i] - prev) / prev);
+    let height = df.height();
+    let mut aligned_prices = vec![Vec::with_capacity(height); m];
+    for row_idx in 0..height {
+        let mut row_valid = true;
+        let mut row_prices = Vec::with_capacity(m);
+        for col in &columns {
+            if let Some(p) = col.get(row_idx) {
+                if p > 0.0 {
+                    row_prices.push(p);
+                } else {
+                    row_valid = false;
+                    break;
+                }
+            } else {
+                row_valid = false;
+                break;
+            }
+        }
+        if row_valid {
+            for col_idx in 0..m {
+                aligned_prices[col_idx].push(row_prices[col_idx]);
+            }
+        }
+    }
+
+    let mut returns = Vec::with_capacity(m);
+    for col_prices in &aligned_prices {
+        let mut asset_returns = Vec::with_capacity(col_prices.len().saturating_sub(1));
+        for i in 1..col_prices.len() {
+            let prev = col_prices[i - 1];
+            asset_returns.push((col_prices[i] - prev) / prev);
         }
         returns.push(asset_returns);
     }
 
-    // Use the minimum return series length for covariance (in case null counts differ per asset)
-    let t = returns.iter().map(|r| r.len()).min().unwrap_or(0);
+    // Use the aligned return series length
+    let t = returns.first().map(|r| r.len()).unwrap_or(0);
     if t < 1 {
         return Err(anyhow!(
             "Insufficient non-null price data for covariance calculation"
