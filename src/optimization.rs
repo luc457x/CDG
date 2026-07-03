@@ -41,6 +41,13 @@ impl Xorshift {
     }
 }
 
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e3779b97f4a7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
+    x ^ (x >> 31)
+}
+
 pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
@@ -159,8 +166,8 @@ pub fn run_monte_carlo(
     let results: Vec<(Vec<f64>, f64, f64, f64)> = (0..num_simulations)
         .into_par_iter()
         .map(|i| {
-            // Seed uniquely and deterministically for each index i
-            let seed_i = master_seed.wrapping_add(i as u64 + 1);
+            // Hash the seed using splitmix64 to ensure high entropy for nearby indices
+            let seed_i = splitmix64(master_seed.wrapping_add(i as u64 + 1));
             let mut rng = Xorshift::new(seed_i);
 
             let mut weights = vec![0.0; m];

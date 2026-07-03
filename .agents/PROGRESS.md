@@ -2,12 +2,27 @@
 
 ## Status
 
-- State: Configurable base output directory and configurable raw output format (JSON/CSV) fully implemented.
-- Last: Added output_dir and raw_format options to Cli, PipelineConfig, flows, tests, and documentation.
+- State: Markowitz seed correlation fixed by implementing splitmix64 seed hashing.
+- Last: Fixed Xorshift seed hashing to ensure diverse weights in Monte Carlo portfolio optimization.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 21: Resolve Markowitz Weights Convergence
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Fix Markowitz Monte Carlo simulation producing identical weights due to correlated Xorshift seeds.
+- Constraints: None.
+- Done:
+  - Implemented `splitmix64` hash helper in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L44-L50).
+  - Hashed the Monte Carlo index seeds in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L169-L171) to ensure high-entropy/diverse weight outputs.
+- Blocked: None.
+- Risk: None.
+- Artifact: [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs).
+- Verification: `cargo test` (41 tests passed), and run-pipeline smoke test verifying different weights (e.g. 1.03% vs 98.84% BTC).
+- Pending: None.
 
 ### Session 20: Output Savings Refinement
 
