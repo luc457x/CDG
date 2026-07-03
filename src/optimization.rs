@@ -51,21 +51,13 @@ fn splitmix64(mut x: u64) -> u64 {
 pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
-    factors: &[f64],
+    annualization_factor: f64,
     num_simulations: usize,
     seed: Option<u64>,
 ) -> Result<OptimizationResult> {
     let m = assets.len();
     if m == 0 {
         return Err(anyhow!("No assets provided for portfolio optimization"));
-    }
-
-    if factors.len() != m {
-        return Err(anyhow!(
-            "Mismatch between number of assets ({}) and annualization factors ({})",
-            m,
-            factors.len()
-        ));
     }
 
     if df.height() < 2 {
@@ -120,14 +112,14 @@ pub fn run_monte_carlo(
                 .map(|(r_i, r_j)| (r_i - mean_i) * (r_j - mean_j))
                 .sum::<f64>()
                 / (t - 1).max(1) as f64;
-            cov_matrix[i][j] = daily_cov * (factors[i] * factors[j]).sqrt();
+            cov_matrix[i][j] = daily_cov * annualization_factor;
         }
     }
 
     // 4. Compute expected returns (annualized)
     let mut mean_returns = vec![0.0; m];
     for i in 0..m {
-        mean_returns[i] = daily_mean_returns[i] * factors[i];
+        mean_returns[i] = daily_mean_returns[i] * annualization_factor;
     }
 
     // 5. Run Monte Carlo simulations
@@ -339,8 +331,7 @@ mod tests {
         .unwrap();
 
         let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
-        let factors = vec![365.0, 365.0];
-        let result = run_monte_carlo(&df, &assets, &factors, 500, None).unwrap();
+        let result = run_monte_carlo(&df, &assets, 365.0, 500, None).unwrap();
 
         // Verify simulated points count
         assert_eq!(result.simulated_points.len(), 500);
@@ -358,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn test_asset_specific_annualization() {
+    fn test_different_annualization_factors() {
         let df = DataFrame::new(vec![
             Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03"]),
             Series::new("asset_a", vec![100.0, 101.0, 102.0]),
@@ -367,22 +358,17 @@ mod tests {
         .unwrap();
 
         let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
-        // Different factors
-        let factors_diff = vec![365.0, 252.0];
-        let result_diff = run_monte_carlo(&df, &assets, &factors_diff, 500, Some(42)).unwrap();
-
-        // Standard factors
-        let factors_same = vec![365.0, 365.0];
-        let result_same = run_monte_carlo(&df, &assets, &factors_same, 500, Some(42)).unwrap();
+        let result_252 = run_monte_carlo(&df, &assets, 252.0, 500, Some(42)).unwrap();
+        let result_365 = run_monte_carlo(&df, &assets, 365.0, 500, Some(42)).unwrap();
 
         // Verify that different factors lead to different annualized outcomes
         assert_ne!(
-            result_diff.max_sharpe.annualized_return,
-            result_same.max_sharpe.annualized_return
+            result_252.max_sharpe.annualized_return,
+            result_365.max_sharpe.annualized_return
         );
         assert_ne!(
-            result_diff.max_sharpe.annualized_volatility,
-            result_same.max_sharpe.annualized_volatility
+            result_252.max_sharpe.annualized_volatility,
+            result_365.max_sharpe.annualized_volatility
         );
     }
 

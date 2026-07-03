@@ -400,3 +400,95 @@ pub fn plot_efficient_frontier(
 
     Ok(())
 }
+
+pub fn plot_backtest_equity(
+    dates: &[String],
+    strategy_equity: &[f64],
+    bh_equity: &[f64],
+    coin_name: &str,
+    strategy_name: &str,
+    output_path: &str,
+) -> Result<()> {
+    if let Some(parent) = Path::new(output_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let n_rows = strategy_equity.len();
+    if n_rows == 0 {
+        return Err(anyhow!("Cannot plot empty equity data"));
+    }
+
+    let mut y_min = f64::INFINITY;
+    let mut y_max = f64::NEG_INFINITY;
+
+    for i in 0..n_rows {
+        let val_s = strategy_equity[i];
+        let val_bh = bh_equity[i];
+        if val_s < y_min { y_min = val_s; }
+        if val_s > y_max { y_max = val_s; }
+        if val_bh < y_min { y_min = val_bh; }
+        if val_bh > y_max { y_max = val_bh; }
+    }
+
+    let padding = if y_max != y_min {
+        (y_max - y_min) * 0.1
+    } else {
+        1000.0
+    };
+    let y_min = (y_min - padding).max(0.0);
+    let y_max = y_max + padding;
+
+    let root = BitMapBackend::new(output_path, (1024, 768)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let title = format!("Backtest Equity Curve: {} ({})", coin_name.to_uppercase(), strategy_name.to_uppercase());
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(title, ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0..n_rows, y_min..y_max)?;
+
+    let label_step = (n_rows / 8).max(1);
+
+    chart
+        .configure_mesh()
+        .x_label_formatter(&|&idx| {
+            if idx < n_rows && idx % label_step == 0 {
+                dates[idx].clone()
+            } else {
+                "".to_string()
+            }
+        })
+        .draw()?;
+
+    // Plot Strategy Equity (Red)
+    let strat_color = RED;
+    chart
+        .draw_series(LineSeries::new(
+            strategy_equity.iter().enumerate().map(|(idx, &val)| (idx, val)),
+            strat_color,
+        ))?
+        .label("Strategy Equity")
+        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], strat_color));
+
+    // Plot Buy & Hold Equity (Blue)
+    let bh_color = BLUE;
+    chart
+        .draw_series(LineSeries::new(
+            bh_equity.iter().enumerate().map(|(idx, &val)| (idx, val)),
+            bh_color,
+        ))?
+        .label("Buy & Hold Equity")
+        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], bh_color));
+
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()?;
+
+    Ok(())
+}
+

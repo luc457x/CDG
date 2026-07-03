@@ -836,72 +836,6 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
     Ok(out_df)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IndicatorResult {
-    pub simple_returns: Vec<f64>,
-    pub log_returns: Vec<f64>,
-    pub ema_12: Vec<f64>,
-    pub ema_26: Vec<f64>,
-    pub macd: Vec<f64>,
-    pub macd_signal: Vec<f64>,
-    pub macd_histogram: Vec<f64>,
-    pub rsi_14: Vec<f64>,
-    pub obv: Vec<f64>,
-}
-
-pub fn compute_indicators_raw(prices: &[f64], volumes: &[f64]) -> IndicatorResult {
-    let n = prices.len();
-    let mut simple_returns = vec![0.0; n];
-    let mut log_returns = vec![0.0; n];
-
-    if n == 0 {
-        return IndicatorResult {
-            simple_returns,
-            log_returns,
-            ema_12: vec![],
-            ema_26: vec![],
-            macd: vec![],
-            macd_signal: vec![],
-            macd_histogram: vec![],
-            rsi_14: vec![],
-            obv: vec![],
-        };
-    }
-
-    for i in 1..n {
-        let prev_p = prices[i - 1];
-        let curr_p = prices[i];
-        if prev_p > 0.0 {
-            simple_returns[i] = (curr_p - prev_p) / prev_p;
-            log_returns[i] = (curr_p / prev_p).ln();
-        }
-    }
-
-    let to_f64_vec = |opt_vec: Vec<Option<f64>>| -> Vec<f64> {
-        opt_vec.into_iter().map(|opt| opt.unwrap_or(0.0)).collect()
-    };
-
-    let ema_12 = to_f64_vec(calculate_ema(prices, 12));
-    let ema_26 = to_f64_vec(calculate_ema(prices, 26));
-    let (macd_opt, macd_signal_opt, macd_hist_opt) = calculate_macd(prices);
-    let macd = to_f64_vec(macd_opt);
-    let macd_signal = to_f64_vec(macd_signal_opt);
-    let macd_histogram = to_f64_vec(macd_hist_opt);
-    let rsi_14 = to_f64_vec(calculate_rsi(prices, 14));
-    let obv = to_f64_vec(calculate_obv(prices, volumes));
-
-    IndicatorResult {
-        simple_returns,
-        log_returns,
-        ema_12,
-        ema_26,
-        macd,
-        macd_signal,
-        macd_histogram,
-        rsi_14,
-        obv,
-    }
-}
 
 pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
     let mut out_df = df.clone();
@@ -1267,22 +1201,4 @@ mod tests {
         assert!(res.column("bitcoin_usd_obv").is_ok());
     }
 
-    #[test]
-    fn test_compute_indicators_raw() {
-        let prices = vec![
-            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0,
-            112.0, 113.0, 114.0, 115.0,
-        ];
-        let volumes = vec![100.0; 16];
-        let result = compute_indicators_raw(&prices, &volumes);
-        assert_eq!(result.simple_returns.len(), 16);
-        assert_eq!(result.log_returns.len(), 16);
-        assert_eq!(result.ema_12.len(), 16);
-        assert_eq!(result.ema_26.len(), 16);
-        assert_eq!(result.macd.len(), 16);
-        assert_eq!(result.macd_signal.len(), 16);
-        assert_eq!(result.macd_histogram.len(), 16);
-        assert_eq!(result.rsi_14.len(), 16);
-        assert_eq!(result.obv.len(), 16);
-    }
 }

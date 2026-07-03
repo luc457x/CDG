@@ -69,6 +69,48 @@ pub enum Commands {
         /// Custom annualization factor override (e.g. 252 or 365)
         #[arg(long, env = "ANNUALIZATION_FACTOR")]
         annualization_factor: Option<f64>,
+
+        /// Enable strategy backtesting
+        #[arg(long, env = "CDG_BACKTEST")]
+        backtest: bool,
+
+        /// Strategy to backtest: 'rsi', 'macd', 'bollinger', or 'all' (default: rsi)
+        #[arg(long, default_value = "rsi", env = "CDG_BACKTEST_STRATEGY")]
+        strategy: String,
+
+        /// Transaction fee as decimal (default: 0.001)
+        #[arg(long, default_value_t = 0.001, env = "CDG_FEE")]
+        fee: f64,
+
+        /// Slippage as decimal (default: 0.0005)
+        #[arg(long, default_value_t = 0.0005, env = "CDG_SLIPPAGE")]
+        slippage: f64,
+    },
+    /// Retrieve and backtest strategy on a coin
+    Backtest {
+        /// Coin ID
+        #[arg(short, long, default_value = "bitcoin")]
+        coin: String,
+
+        /// Vs currency (default: usd)
+        #[arg(short = 'v', long, default_value = "usd")]
+        currency: String,
+
+        /// Timeframe in days (default: 90)
+        #[arg(short, long, default_value_t = 90)]
+        days: u32,
+
+        /// Strategy to backtest: 'rsi', 'macd', 'bollinger', or 'all' (default: rsi)
+        #[arg(short, long, default_value = "rsi")]
+        strategy: String,
+
+        /// Transaction fee as decimal (default: 0.001)
+        #[arg(long, default_value_t = 0.001)]
+        fee: f64,
+
+        /// Slippage as decimal (default: 0.0005)
+        #[arg(long, default_value_t = 0.0005)]
+        slippage: f64,
     },
     /// Ping CoinGecko and Yahoo Finance API servers
     Ping,
@@ -142,6 +184,10 @@ async fn main() -> Result<()> {
             seed,
             concurrency,
             annualization_factor,
+            backtest,
+            strategy,
+            fee,
+            slippage,
         }) => {
             run_pipeline_flow(PipelineConfig {
                 coin: &coin,
@@ -158,7 +204,33 @@ async fn main() -> Result<()> {
                 cache_ttl: args.cache_ttl,
                 concurrency,
                 annualization_factor,
+                backtest,
+                strategy: &strategy,
+                fee,
+                slippage,
             })
+            .await?;
+        }
+        Some(Commands::Backtest {
+            coin,
+            currency,
+            days,
+            strategy,
+            fee,
+            slippage,
+        }) => {
+            run_standalone_backtest(
+                &db_path,
+                &output_dir,
+                &output_prefix,
+                args.cache_ttl,
+                &coin,
+                &currency,
+                days,
+                &strategy,
+                fee,
+                slippage,
+            )
             .await?;
         }
         Some(Commands::Ping) => {
@@ -313,6 +385,10 @@ pub struct PipelineConfig<'a> {
     pub cache_ttl: i64,
     pub concurrency: Option<usize>,
     pub annualization_factor: Option<f64>,
+    pub backtest: bool,
+    pub strategy: &'a str,
+    pub fee: f64,
+    pub slippage: f64,
 }
 
 async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
@@ -347,6 +423,10 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         }
     });
     let annualization_factor = config.annualization_factor;
+    let backtest = config.backtest;
+    let strategy = config.strategy;
+    let fee = config.fee;
+    let slippage = config.slippage;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let run_dir = format!("{}/run_{}", output_dir, timestamp);
@@ -691,19 +771,123 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
     pb.finish_with_message("Data fetching and processing complete.");
 
-    // 12. Portfolio Optimization (Markowitz Monte Carlo)
+    // 12. Strategy Backtesting
+    if backtest {
+        println!("\n==================================================");
+        println!("RUNNING STRATEGY BACKTESTING");
+        println!("==================================================");
+        let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
+
+        let mut backtest_metrics = Vec::new();
+        let strats = if strategy.to_lowercase() == "all" {
+            vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()]
+        } else {
+            vec![strategy.to_lowercase()]
+        };
+
+        for col in &currency_cols {
+            for strat in &strats {
+                match cdg::backtest::run_backtest_for_asset(
+                    &final_df,
+                    col,
+                    strat,
+                    fee,
+                    slippage,
+                    final_ann_factor,
+                ) {
+                    Ok((metrics, equity, bh_equity)) => {
+                        backtest_metrics.push(metrics);
+
+                        // Save PNG plot
+                        let dates: Vec<String> = final_df
+                            .column("date")?
+                            .str()?
+                            .into_iter()
+                            .map(|opt| opt.unwrap_or("").to_string())
+                            .collect();
+                        let plot_path = format!("{}/{}_{}_backtest.png", run_dir, col, strat);
+                        if let Err(e) = cdg::plot::plot_backtest_equity(
+                            &dates,
+                            &equity,
+                            &bh_equity,
+                            col,
+                            strat,
+                            &plot_path,
+                        ) {
+                            println!("Warning: Failed to generate backtest equity plot for {} ({}): {}", col, strat, e);
+                        }
+                    }
+                    Err(e) => {
+                        println!("Warning: Backtest failed for {} ({}): {}", col, strat, e);
+                    }
+                }
+            }
+        }
+
+        if !backtest_metrics.is_empty() {
+            let backtest_table = cdg::backtest::format_backtest_table(&backtest_metrics);
+            println!("\nBacktest Summary Results:");
+            println!("{}", backtest_table);
+
+            // Export to CSV
+            let csv_report_path = format!("{}/backtest_report.csv", run_dir);
+            if let Ok(mut file) = std::fs::File::create(&csv_report_path) {
+                if let Err(e) = writeln!(
+                    file,
+                    "coin,currency,strategy,strategy_return,buy_and_hold_return,strategy_sharpe,buy_and_hold_sharpe,strategy_max_drawdown,buy_and_hold_max_drawdown,win_rate,trades,rating"
+                ) {
+                    println!("Warning: Failed to write backtest CSV header: {}", e);
+                }
+                for m in &backtest_metrics {
+                    if let Err(e) = writeln!(
+                        file,
+                        "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{}",
+                        m.coin,
+                        m.currency,
+                        m.strategy,
+                        m.strategy_return,
+                        m.buy_and_hold_return,
+                        m.strategy_sharpe,
+                        m.buy_and_hold_sharpe,
+                        m.strategy_max_drawdown,
+                        m.buy_and_hold_max_drawdown,
+                        m.active_win_rate,
+                        m.total_trades,
+                        m.strategy_rating
+                    ) {
+                        println!("Warning: Failed to write backtest CSV row: {}", e);
+                    }
+                }
+                println!("Backtest CSV report saved to: {}", csv_report_path);
+            }
+
+            // Export to JSON
+            let json_report_path = format!("{}/backtest_report.json", run_dir);
+            let mut report_map = std::collections::HashMap::new();
+            for m in &backtest_metrics {
+                report_map.insert(format!("{}_{}", m.coin, m.strategy), m.clone());
+            }
+            let report = cdg::backtest::BacktestReport {
+                timestamp: chrono::Local::now().to_rfc3339(),
+                metrics: report_map,
+            };
+            if let Ok(json_str) = serde_json::to_string_pretty(&report) {
+                if std::fs::write(&json_report_path, json_str).is_ok() {
+                    println!("Backtest JSON report saved to: {}", json_report_path);
+                }
+            }
+        }
+    }
+
+    // 13. Portfolio Optimization (Markowitz Monte Carlo)
     if currency_cols.len() >= 2 {
         println!("\n==================================================");
         println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
         println!("==================================================");
 
-        // Compute annualization factors dynamically for target assets only
-        let factors: Vec<f64> = currency_cols
-            .iter()
-            .map(|_| annualization_factor.unwrap_or(365.0))
-            .collect();
+        let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
-        match cdg::optimization::run_monte_carlo(&final_df, &currency_cols, &factors, 10000, seed) {
+        match cdg::optimization::run_monte_carlo(&final_df, &currency_cols, final_ann_factor, 10000, seed) {
             Ok(opt_res) => {
                 println!("\nOptimal Portfolio Formulations (Annualized):");
                 let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
@@ -748,6 +932,190 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     }
 
     println!("CDG data pipeline completed successfully!");
+    Ok(())
+}
+
+async fn run_standalone_backtest(
+    db_path: &str,
+    output_dir: &str,
+    _output_prefix: &str,
+    cache_ttl: i64,
+    coin: &str,
+    currency: &str,
+    days: u32,
+    strategy: &str,
+    fee: f64,
+    slippage: f64,
+) -> Result<()> {
+    println!("Starting CDG Standalone Backtester...");
+    println!("Target Coin(s): {}", coin);
+    println!("Currency: {}", currency);
+    println!("Days: {}", days);
+    println!("Strategy: {}", strategy);
+    println!("Fee: {}", fee);
+    println!("Slippage: {}", slippage);
+
+    // 1. Initialize Cache
+    let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
+
+    // 2. Initialize Client
+    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(cache_ttl);
+
+    // 3. Calculate Timestamps
+    let now = chrono::Utc::now().timestamp();
+    let rounded_now = (now / 86400) * 86400;
+    let days_num: i64 = days as i64;
+    let from_timestamp = rounded_now - (days_num * 24 * 60 * 60);
+    let to_timestamp = rounded_now;
+
+    // 4. Parse coins and currencies
+    let coins: Vec<&str> = coin
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if coins.is_empty() {
+        return Err(anyhow::anyhow!("No coins specified"));
+    }
+
+    let currencies: Vec<&str> = currency
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if currencies.is_empty() {
+        return Err(anyhow::anyhow!("No currencies specified"));
+    }
+
+    // 5. Ingestion Loop
+    let mut coin_dfs = Vec::new();
+    let mut target_names = Vec::new();
+
+    for c in &coins {
+        for curr in &currencies {
+            println!("Ingesting historical data for {} in {}...", c, curr);
+            let cg_val = cg_client
+                .get_coin_market_chart_range(c, curr, from_timestamp, to_timestamp)
+                .await?;
+            let cg_json_str = serde_json::to_string(&cg_val)?;
+
+            let c_safe = cdg::utils::sanitize_name(c);
+            let curr_safe = cdg::utils::sanitize_name(curr);
+            cdg::utils::validate_safe_path(&c_safe)?;
+            cdg::utils::validate_safe_path(&curr_safe)?;
+
+            let price_col_name = format!("{}_{}", c_safe, curr_safe);
+            let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
+
+            let days_str = days.to_string();
+            let ohlc_val = cg_client.get_coin_ohlc(c, curr, &days_str).await?;
+            let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
+            let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
+
+            let mut df = analysis::align_datasets(&df_market, &[df_ohlc], false)?;
+            df = analysis::compute_returns_and_indicators(&df, &price_col_name)?;
+
+            coin_dfs.push(df);
+            target_names.push(price_col_name);
+        }
+    }
+
+    // 6. Run backtests
+    let mut backtest_metrics = Vec::new();
+    let strats = if strategy.to_lowercase() == "all" {
+        vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()]
+    } else {
+        vec![strategy.to_lowercase()]
+    };
+
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let run_dir = format!("{}/backtest_run_{}", output_dir, timestamp);
+    cdg::utils::validate_safe_path(&run_dir)?;
+    std::fs::create_dir_all(&run_dir)?;
+
+    for (df, col) in coin_dfs.iter().zip(target_names.iter()) {
+        for strat in &strats {
+            // Standalone run uses default annualization 365.0
+            match cdg::backtest::run_backtest_for_asset(df, col, strat, fee, slippage, 365.0) {
+                Ok((metrics, equity, bh_equity)) => {
+                    backtest_metrics.push(metrics);
+
+                    // Plot equity curve
+                    let dates: Vec<String> = df
+                        .column("date")?
+                        .str()?
+                        .into_iter()
+                        .map(|opt| opt.unwrap_or("").to_string())
+                        .collect();
+                    let plot_path = format!("{}/{}_{}_backtest.png", run_dir, col, strat);
+                    if let Err(e) = cdg::plot::plot_backtest_equity(
+                        &dates,
+                        &equity,
+                        &bh_equity,
+                        col,
+                        strat,
+                        &plot_path,
+                    ) {
+                        println!("Warning: Failed to generate backtest equity plot for {} ({}): {}", col, strat, e);
+                    }
+                }
+                Err(e) => {
+                    println!("Warning: Backtest failed for {} ({}): {}", col, strat, e);
+                }
+            }
+        }
+    }
+
+    if !backtest_metrics.is_empty() {
+        let backtest_table = cdg::backtest::format_backtest_table(&backtest_metrics);
+        println!("\nBacktest Summary Results (Standalone Run):");
+        println!("{}", backtest_table);
+
+        // Export JSON/CSV in run_dir
+        let csv_report_path = format!("{}/backtest_report.csv", run_dir);
+        if let Ok(mut file) = std::fs::File::create(&csv_report_path) {
+            writeln!(
+                file,
+                "coin,currency,strategy,strategy_return,buy_and_hold_return,strategy_sharpe,buy_and_hold_sharpe,strategy_max_drawdown,buy_and_hold_max_drawdown,win_rate,trades,rating"
+            )?;
+            for m in &backtest_metrics {
+                writeln!(
+                    file,
+                    "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{}",
+                    m.coin,
+                    m.currency,
+                    m.strategy,
+                    m.strategy_return,
+                    m.buy_and_hold_return,
+                    m.strategy_sharpe,
+                    m.buy_and_hold_sharpe,
+                    m.strategy_max_drawdown,
+                    m.buy_and_hold_max_drawdown,
+                    m.active_win_rate,
+                    m.total_trades,
+                    m.strategy_rating
+                )?;
+            }
+            println!("Backtest CSV report saved to: {}", csv_report_path);
+        }
+
+        let json_report_path = format!("{}/backtest_report.json", run_dir);
+        let mut report_map = std::collections::HashMap::new();
+        for m in &backtest_metrics {
+            report_map.insert(format!("{}_{}", m.coin, m.strategy), m.clone());
+        }
+        let report = cdg::backtest::BacktestReport {
+            timestamp: chrono::Local::now().to_rfc3339(),
+            metrics: report_map,
+        };
+        if let Ok(json_str) = serde_json::to_string_pretty(&report) {
+            std::fs::write(&json_report_path, json_str)?;
+            println!("Backtest JSON report saved to: {}", json_report_path);
+        }
+    } else {
+        println!("No backtests executed successfully.");
+    }
+
     Ok(())
 }
 
@@ -1015,6 +1383,41 @@ async fn run_interactive_menu(
                     ann_factor_str.parse::<f64>().ok()
                 };
 
+                let backtest = dialoguer::Confirm::new()
+                    .with_prompt("Run strategy backtesting?")
+                    .default(false)
+                    .interact()?;
+
+                let (strategy, fee, slippage) = if backtest {
+                    let strat_options = &["RSI", "MACD", "Bollinger Bands", "All (Compare)"];
+                    let selection = dialoguer::Select::new()
+                        .with_prompt("Select backtest strategy")
+                        .default(0)
+                        .items(strat_options)
+                        .interact()?;
+                    let strategy_str = match selection {
+                        0 => "rsi",
+                        1 => "macd",
+                        2 => "bollinger",
+                        3 => "all",
+                        _ => "rsi",
+                    };
+
+                    let fee: f64 = dialoguer::Input::new()
+                        .with_prompt("Enter transaction fee (decimal)")
+                        .default(0.001)
+                        .interact_text()?;
+
+                    let slippage: f64 = dialoguer::Input::new()
+                        .with_prompt("Enter slippage (decimal)")
+                        .default(0.0005)
+                        .interact_text()?;
+
+                    (strategy_str.to_string(), fee, slippage)
+                } else {
+                    ("rsi".to_string(), 0.001, 0.0005)
+                };
+
                 println!("\nRunning pipeline...\n");
                 if let Err(e) = run_pipeline_flow(PipelineConfig {
                     coin: &coin,
@@ -1031,6 +1434,10 @@ async fn run_interactive_menu(
                     cache_ttl,
                     concurrency: Some(concurrency),
                     annualization_factor,
+                    backtest,
+                    strategy: &strategy,
+                    fee,
+                    slippage,
                 })
                 .await
                 {
