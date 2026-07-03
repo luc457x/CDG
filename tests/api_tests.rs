@@ -216,3 +216,22 @@ async fn test_yahoo_ping() {
     cleanup_db(db_path);
     drop(_server_handle);
 }
+
+#[tokio::test]
+async fn test_clients_with_progress_bar() {
+    let db_path = "tests/test_clients_pb.db";
+    cleanup_db(db_path);
+    let cache = std::sync::Arc::new(Cache::new(db_path).await.unwrap());
+
+    let pb = indicatif::ProgressBar::hidden();
+
+    let _cg_client = CoinGeckoClient::new(cache.clone())
+        .unwrap()
+        .with_progress_bar(pb.clone());
+
+    let _yahoo_client = YahooClient::new(cache.clone())
+        .unwrap()
+        .with_progress_bar(pb);
+
+    cleanup_db(db_path);
+}

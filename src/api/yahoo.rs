@@ -8,6 +8,7 @@ pub struct YahooClient {
     cache: Arc<dyn CacheBackend>,
     base_url: String,
     ttl_secs: i64,
+    pb: Option<indicatif::ProgressBar>,
 }
 
 impl YahooClient {
@@ -19,11 +20,17 @@ impl YahooClient {
             cache,
             base_url: "https://query2.finance.yahoo.com/v8/finance/chart".to_string(),
             ttl_secs: 300, // 5 minutes cache default
+            pb: None,
         })
     }
 
     pub fn with_ttl(mut self, ttl_secs: i64) -> Self {
         self.ttl_secs = ttl_secs;
+        self
+    }
+
+    pub fn with_progress_bar(mut self, pb: indicatif::ProgressBar) -> Self {
+        self.pb = Some(pb);
         self
     }
 
@@ -68,13 +75,18 @@ impl YahooClient {
                                 ticker
                             ));
                         }
-                        eprintln!(
+                        let msg = format!(
                             "Warning: Yahoo Finance API transient issue ({}). Retrying in {:.1}s... (Attempt {}/{})",
                             status,
                             retry_delay.as_secs_f32(),
                             attempts,
                             max_attempts
                         );
+                        if let Some(ref pb) = self.pb {
+                            pb.set_message(msg);
+                        } else {
+                            eprintln!("{}", msg);
+                        }
                         tokio::time::sleep(retry_delay).await;
                         retry_delay *= 2;
                         continue;
@@ -113,13 +125,18 @@ impl YahooClient {
                             ticker
                         ));
                     }
-                    eprintln!(
+                    let msg = format!(
                         "Warning: Yahoo Finance API request failed: {}. Retrying in {:.1}s... (Attempt {}/{})",
                         e,
                         retry_delay.as_secs_f32(),
                         attempts,
                         max_attempts
                     );
+                    if let Some(ref pb) = self.pb {
+                        pb.set_message(msg);
+                    } else {
+                        eprintln!("{}", msg);
+                    }
                     tokio::time::sleep(retry_delay).await;
                     retry_delay *= 2;
                 }

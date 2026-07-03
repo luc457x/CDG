@@ -576,7 +576,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut join_set = tokio::task::JoinSet::new();
-    let cg_client_arc = std::sync::Arc::new(cg_client);
+    let cg_client_arc = std::sync::Arc::new(cg_client.with_progress_bar(pb.clone()));
 
     for (c, curr) in tasks {
         let sem = semaphore.clone();
@@ -667,6 +667,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let mut assets_to_plot = currency_cols.clone();
 
     if !light {
+        let yahoo_client = yahoo_client.with_progress_bar(pb.clone());
         let bench_tickers = vec!["^GSPC", "^DJI", "^IXIC", "^HSI", "^BVSP"];
         for ticker in bench_tickers {
             pb.set_message(format!("Fetching Yahoo Finance data for {}...", ticker));

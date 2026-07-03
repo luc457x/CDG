@@ -18,6 +18,7 @@ pub struct CoinGeckoClient {
     ttl_secs: i64,
     demo_key: Option<String>,
     pro_key: Option<String>,
+    pb: Option<indicatif::ProgressBar>,
 }
 
 impl CoinGeckoClient {
@@ -50,11 +51,17 @@ impl CoinGeckoClient {
             ttl_secs: 300, // 5 minutes cache default
             demo_key,
             pro_key,
+            pb: None,
         })
     }
 
     pub fn with_ttl(mut self, ttl_secs: i64) -> Self {
         self.ttl_secs = ttl_secs;
+        self
+    }
+
+    pub fn with_progress_bar(mut self, pb: indicatif::ProgressBar) -> Self {
+        self.pb = Some(pb);
         self
     }
 
@@ -111,12 +118,17 @@ impl CoinGeckoClient {
                         max_attempts
                     ));
                 }
-                eprintln!(
+                let msg = format!(
                     "Warning: CoinGecko API Rate Limit Exceeded (429). Retrying in {:.1}s... (Attempt {}/{})",
                     retry_delay.as_secs_f32(),
                     attempts,
                     max_attempts
                 );
+                if let Some(ref pb) = self.pb {
+                    pb.set_message(msg);
+                } else {
+                    eprintln!("{}", msg);
+                }
                 tokio::time::sleep(retry_delay).await;
                 retry_delay *= 2;
                 continue;
