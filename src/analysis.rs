@@ -836,6 +836,143 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
     Ok(out_df)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IndicatorResult {
+    pub simple_returns: Vec<f64>,
+    pub log_returns: Vec<f64>,
+    pub ema_12: Vec<f64>,
+    pub ema_26: Vec<f64>,
+    pub macd: Vec<f64>,
+    pub macd_signal: Vec<f64>,
+    pub macd_histogram: Vec<f64>,
+    pub rsi_14: Vec<f64>,
+    pub obv: Vec<f64>,
+}
+
+pub fn compute_indicators_raw(prices: &[f64], volumes: &[f64]) -> IndicatorResult {
+    let n = prices.len();
+    let mut simple_returns = vec![0.0; n];
+    let mut log_returns = vec![0.0; n];
+    let mut ema_12 = vec![0.0; n];
+    let mut ema_26 = vec![0.0; n];
+    let mut macd = vec![0.0; n];
+    let mut macd_signal = vec![0.0; n];
+    let mut macd_histogram = vec![0.0; n];
+    let mut rsi_14 = vec![0.0; n];
+    let mut obv = vec![0.0; n];
+
+    if n == 0 {
+        return IndicatorResult {
+            simple_returns,
+            log_returns,
+            ema_12,
+            ema_26,
+            macd,
+            macd_signal,
+            macd_histogram,
+            rsi_14,
+            obv,
+        };
+    }
+
+    // 1. Returns and OBV
+    obv[0] = volumes[0];
+    for i in 1..n {
+        let prev_p = prices[i - 1];
+        let curr_p = prices[i];
+        if prev_p > 0.0 {
+            simple_returns[i] = (curr_p - prev_p) / prev_p;
+            log_returns[i] = (curr_p / prev_p).ln();
+        }
+        if curr_p > prev_p {
+            obv[i] = obv[i - 1] + volumes[i];
+        } else if curr_p < prev_p {
+            obv[i] = obv[i - 1] - volumes[i];
+        } else {
+            obv[i] = obv[i - 1];
+        }
+    }
+
+    // Helper for EMA calculation
+    let calc_ema = |data: &[f64], period: usize| -> Vec<f64> {
+        let mut ema = vec![0.0; n];
+        if n < period {
+            return ema;
+        }
+        let k = 2.0 / (period as f64 + 1.0);
+        let sum: f64 = data[0..period].iter().sum();
+        ema[period - 1] = sum / (period as f64);
+        for i in period..n {
+            ema[i] = data[i] * k + ema[i - 1] * (1.0 - k);
+        }
+        ema
+    };
+
+    // 2. EMAs
+    ema_12 = calc_ema(prices, 12);
+    ema_26 = calc_ema(prices, 26);
+
+    // 3. MACD
+    for i in 0..n {
+        macd[i] = ema_12[i] - ema_26[i];
+    }
+    macd_signal = calc_ema(&macd, 9);
+    for i in 0..n {
+        macd_histogram[i] = macd[i] - macd_signal[i];
+    }
+
+    // 4. RSI (14)
+    if n >= 14 {
+        let mut gains = vec![0.0; n];
+        let mut losses = vec![0.0; n];
+        for i in 1..n {
+            let diff = prices[i] - prices[i - 1];
+            if diff > 0.0 {
+                gains[i] = diff;
+            } else {
+                losses[i] = -diff;
+            }
+        }
+        let mut avg_gain = vec![0.0; n];
+        let mut avg_loss = vec![0.0; n];
+
+        let mut sum_gain = 0.0;
+        let mut sum_loss = 0.0;
+        for i in 1..=14 {
+            sum_gain += gains[i];
+            sum_loss += losses[i];
+        }
+        avg_gain[14] = sum_gain / 14.0;
+        avg_loss[14] = sum_loss / 14.0;
+
+        for i in 15..n {
+            avg_gain[i] = (avg_gain[i - 1] * 13.0 + gains[i]) / 14.0;
+            avg_loss[i] = (avg_loss[i - 1] * 13.0 + losses[i]) / 14.0;
+        }
+
+        for i in 14..n {
+            if avg_loss[i] == 0.0 {
+                rsi_14[i] = 100.0;
+            } else {
+                let rs = avg_gain[i] / avg_loss[i];
+                rsi_14[i] = 100.0 - (100.0 / (1.0 + rs));
+            }
+        }
+    }
+
+    IndicatorResult {
+        simple_returns,
+        log_returns,
+        ema_12,
+        ema_26,
+        macd,
+        macd_signal,
+        macd_histogram,
+        rsi_14,
+        obv,
+    }
+}
+
 pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
     let mut out_df = df.clone();
     let col_names: Vec<String> = df
@@ -1198,5 +1335,24 @@ mod tests {
         assert!(res.column("bitcoin_usd_stoch_d_3").is_ok());
         assert!(res.column("bitcoin_usd_adx_14").is_ok());
         assert!(res.column("bitcoin_usd_obv").is_ok());
+    }
+
+    #[test]
+    fn test_compute_indicators_raw() {
+        let prices = vec![
+            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0,
+            112.0, 113.0, 114.0, 115.0,
+        ];
+        let volumes = vec![100.0; 16];
+        let result = compute_indicators_raw(&prices, &volumes);
+        assert_eq!(result.simple_returns.len(), 16);
+        assert_eq!(result.log_returns.len(), 16);
+        assert_eq!(result.ema_12.len(), 16);
+        assert_eq!(result.ema_26.len(), 16);
+        assert_eq!(result.macd.len(), 16);
+        assert_eq!(result.macd_signal.len(), 16);
+        assert_eq!(result.macd_histogram.len(), 16);
+        assert_eq!(result.rsi_14.len(), 16);
+        assert_eq!(result.obv.len(), 16);
     }
 }

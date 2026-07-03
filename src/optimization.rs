@@ -9,7 +9,7 @@ use polars::prelude::*;
 /// known limitation. A dedicated per-asset factor can be introduced if needed.
 const TRADING_DAYS_PER_YEAR: f64 = 365.0;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Portfolio {
     pub weights: Vec<f64>,
     pub annualized_return: f64,
@@ -17,7 +17,7 @@ pub struct Portfolio {
     pub sharpe_ratio: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OptimizationResult {
     pub max_sharpe: Portfolio,
     pub min_volatility: Portfolio,
