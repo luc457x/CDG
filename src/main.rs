@@ -53,6 +53,14 @@ pub enum Commands {
         /// Optional RNG seed for Monte Carlo simulation (default: 1337)
         #[arg(long)]
         seed: Option<u64>,
+
+        /// CoinGecko query concurrency limit (default: 3)
+        #[arg(long, env = "COINGECKO_CONCURRENCY", default_value_t = 3)]
+        concurrency: usize,
+
+        /// Custom annualization factor override (e.g. 252 or 365)
+        #[arg(long, env = "ANNUALIZATION_FACTOR")]
+        annualization_factor: Option<f64>,
     },
     /// Ping CoinGecko and Yahoo Finance API servers
     Ping,
@@ -106,6 +114,8 @@ async fn main() -> Result<()> {
             light,
             drop_weekends,
             seed,
+            concurrency,
+            annualization_factor,
         }) => {
             run_pipeline_flow(
                 &coin,
@@ -118,6 +128,8 @@ async fn main() -> Result<()> {
                 &args.output_prefix,
                 seed,
                 args.cache_ttl,
+                concurrency,
+                annualization_factor,
             )
             .await?;
         }
@@ -261,6 +273,8 @@ async fn run_pipeline_flow(
     output_prefix: &str,
     seed: Option<u64>,
     cache_ttl: i64,
+    concurrency: usize,
+    annualization_factor: Option<f64>,
 ) -> Result<()> {
     // Lightweight override
     if light {
@@ -284,6 +298,11 @@ async fn run_pipeline_flow(
     println!("Drop Weekends: {}", drop_weekends);
     println!("DB Path: {}", db_path);
     println!("Output Prefix: {}", output_prefix);
+    println!("Concurrency: {}", concurrency);
+    println!(
+        "Annualization Factor Override: {}",
+        annualization_factor.map_or("None".to_string(), |f| f.to_string())
+    );
     println!(
         "Seed: {}",
         seed.map_or("default (1337)".to_string(), |s| s.to_string())
@@ -398,34 +417,41 @@ async fn run_pipeline_flow(
     );
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
-    let mut currency_dfs = Vec::new();
-    let mut currency_cols = Vec::new();
-
+    let mut tasks = Vec::new();
     for c in &coins {
         for &curr in &currencies {
-            pb.set_message(format!(
-                "Fetching CoinGecko market chart for {} in {}...",
-                c, curr
-            ));
-            let cg_val = cg_client
-                .get_coin_market_chart_range(c, curr, from_timestamp, to_timestamp)
+            tasks.push((c.clone(), curr.to_string()));
+        }
+    }
+
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut join_set = tokio::task::JoinSet::new();
+    let cg_client_arc = std::sync::Arc::new(cg_client);
+
+    for (c, curr) in tasks {
+        let sem = semaphore.clone();
+        let client = cg_client_arc.clone();
+        let ohlcv_dir_clone = ohlcv_dir.clone();
+        let days_str = days.to_string();
+
+        join_set.spawn(async move {
+            let _permit = sem.acquire().await?;
+
+            let cg_val = client
+                .get_coin_market_chart_range(&c, &curr, from_timestamp, to_timestamp)
                 .await?;
             let cg_json_str = serde_json::to_string(&cg_val)?;
 
             let price_col_name = format!("{}_{}", c, curr);
-            currency_cols.push(price_col_name.clone());
-
             let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
 
-            pb.set_message(format!("Fetching CoinGecko OHLC for {} in {}...", c, curr));
-            let ohlc_val = cg_client.get_coin_ohlc(c, curr, &days.to_string()).await?;
+            let ohlc_val = client.get_coin_ohlc(&c, &curr, &days_str).await?;
 
-            // Save raw OHLCV JSON and CSV files inside ohlcv_dir
             let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_val)?;
-            let json_file_path = format!("{}/{}_{}.json", ohlcv_dir, c, curr);
+            let json_file_path = format!("{}/{}_{}.json", ohlcv_dir_clone, c, curr);
             std::fs::write(&json_file_path, &ohlc_json_pretty)?;
 
-            let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir, c, curr);
+            let csv_file_path = format!("{}/{}_{}.csv", ohlcv_dir_clone, c, curr);
             let mut wtr_ohlcv = std::fs::File::create(&csv_file_path)?;
             writeln!(wtr_ohlcv, "timestamp,open,high,low,close")?;
             for row in &ohlc_val {
@@ -441,13 +467,27 @@ async fn run_pipeline_flow(
             let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
             let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
 
-            pb.set_message(format!(
-                "Aligning market and OHLC data for {} in {}...",
-                c, curr
-            ));
             let df = analysis::align_datasets(&df_market, &[df_ohlc], false)?;
-            pb.set_message(format!("Loaded {} rows for {} in {}", df.height(), c, curr));
-            currency_dfs.push(df);
+            Ok::<(polars::prelude::DataFrame, String), anyhow::Error>((df, price_col_name))
+        });
+    }
+
+    let mut currency_dfs = Vec::new();
+    let mut currency_cols = Vec::new();
+
+    while let Some(res) = join_set.join_next().await {
+        match res {
+            Ok(Ok((df, col_name))) => {
+                pb.set_message(format!("Loaded {} rows for {}", df.height(), &col_name));
+                currency_dfs.push(df);
+                currency_cols.push(col_name);
+            }
+            Ok(Err(e)) => {
+                return Err(e);
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Join error: {}", e));
+            }
         }
     }
 
@@ -571,7 +611,21 @@ async fn run_pipeline_flow(
         println!("\n==================================================");
         println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
         println!("==================================================");
-        match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, 10000, seed) {
+
+        // Compute annualization factors dynamically
+        let factors: Vec<f64> = assets_to_plot.iter().map(|asset| {
+            if let Some(val) = annualization_factor {
+                val
+            } else if currency_cols.contains(asset) {
+                365.0
+            } else if asset.to_uppercase().ends_with("-USD") || asset.to_uppercase().ends_with("-EUR") {
+                365.0
+            } else {
+                252.0
+            }
+        }).collect();
+
+        match cdg::optimization::run_monte_carlo(&final_df, &assets_to_plot, &factors, 10000, seed) {
             Ok(opt_res) => {
                 println!("\nOptimal Portfolio Formulations (Annualized):");
                 let metrics_table = cdg::optimization::format_portfolio_metrics_table(&opt_res);
@@ -823,6 +877,8 @@ async fn run_interactive_menu(
                     output_prefix,
                     seed,
                     cache_ttl,
+                    3,
+                    None,
                 )
                 .await
                 {

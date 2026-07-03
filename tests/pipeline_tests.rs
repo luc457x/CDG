@@ -26,7 +26,8 @@ fn test_optimization_integration() {
     .unwrap();
 
     let assets = vec!["BTC".to_string(), "ETH".to_string()];
-    let res = run_monte_carlo(&df, &assets, 100, None).unwrap();
+    let factors = vec![365.0, 365.0];
+    let res = run_monte_carlo(&df, &assets, &factors, 100, None).unwrap();
 
     assert_eq!(res.simulated_points.len(), 100);
     assert_eq!(res.max_sharpe.weights.len(), 2);
@@ -46,8 +47,9 @@ fn test_optimization_deterministic_with_seed() {
     .unwrap();
 
     let assets = vec!["BTC".to_string(), "ETH".to_string()];
-    let res1 = run_monte_carlo(&df, &assets, 200, Some(42)).unwrap();
-    let res2 = run_monte_carlo(&df, &assets, 200, Some(42)).unwrap();
+    let factors = vec![365.0, 365.0];
+    let res1 = run_monte_carlo(&df, &assets, &factors, 200, Some(42)).unwrap();
+    let res2 = run_monte_carlo(&df, &assets, &factors, 200, Some(42)).unwrap();
 
     // Same seed must produce identical optimal weights
     assert_eq!(
@@ -57,7 +59,7 @@ fn test_optimization_deterministic_with_seed() {
     assert_eq!(res1.min_volatility.weights, res2.min_volatility.weights);
 
     // Different seed must not produce identical weights (with high probability)
-    let res3 = run_monte_carlo(&df, &assets, 200, Some(99)).unwrap();
+    let res3 = run_monte_carlo(&df, &assets, &factors, 200, Some(99)).unwrap();
     // Allow the test to simply verify different seeds ran successfully
     assert_eq!(res3.simulated_points.len(), 200);
 }

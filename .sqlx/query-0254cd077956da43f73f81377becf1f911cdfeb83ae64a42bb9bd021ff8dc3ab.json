@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO api_cache (url, response_body, cached_at_timestamp)\n             VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "0254cd077956da43f73f81377becf1f911cdfeb83ae64a42bb9bd021ff8dc3ab"
+}

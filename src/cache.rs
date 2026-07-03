@@ -34,10 +34,12 @@ impl Cache {
             }
         }
 
-        use sqlx::sqlite::SqliteConnectOptions;
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
         let options = SqliteConnectOptions::new()
             .filename(db_path)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -50,12 +52,12 @@ impl Cache {
     }
 
     async fn init(&self) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "CREATE TABLE IF NOT EXISTS api_cache (
                 url TEXT PRIMARY KEY,
                 response_body TEXT NOT NULL,
                 cached_at_timestamp INTEGER NOT NULL
-            );",
+            );"
         )
         .execute(&self.pool)
         .await?;
@@ -63,23 +65,25 @@ impl Cache {
     }
 
     pub async fn get_internal(&self, url: &str, ttl_secs: i64) -> Result<Option<String>> {
-        let row: Option<(String, i64)> = sqlx::query_as(
+        let row = sqlx::query!(
             "SELECT response_body, cached_at_timestamp FROM api_cache WHERE url = ?",
+            url
         )
-        .bind(url)
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some((body, timestamp)) = row {
+        if let Some(r) = row {
             let now = Utc::now().timestamp();
-            if now - timestamp < ttl_secs {
-                return Ok(Some(body));
+            if now - r.cached_at_timestamp < ttl_secs {
+                return Ok(Some(r.response_body));
             } else {
                 // Expired: delete it
-                sqlx::query("DELETE FROM api_cache WHERE url = ?")
-                    .bind(url)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query!(
+                    "DELETE FROM api_cache WHERE url = ?",
+                    url
+                )
+                .execute(&self.pool)
+                .await?;
             }
         }
         Ok(None)
@@ -87,13 +91,13 @@ impl Cache {
 
     pub async fn insert_internal(&self, url: &str, body: &str) -> Result<()> {
         let now = Utc::now().timestamp();
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR REPLACE INTO api_cache (url, response_body, cached_at_timestamp)
              VALUES (?, ?, ?)",
+            url,
+            body,
+            now
         )
-        .bind(url)
-        .bind(body)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())

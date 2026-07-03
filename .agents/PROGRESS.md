@@ -2,12 +2,35 @@
 
 ## Status
 
-- State: Configurable cache TTL CLI flag and interactive menu option implemented.
-- Last: Added --cache-ttl CLI option, Configure Cache TTL menu action, updated docs, and passed all tests.
+- State: Backlog fully implemented: WAL performance settings, offline compile-time verification, parallel CoinGecko ingestion, and asset-specific annualization.
+- Last: Completed backlog implementation, added unit tests, verified offline compilations, and updated specs.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 16: Implement Backlog Items
+
+- Date: 2026-07-03
+- Agent: Antigravity
+- Goal: Implement all items from the backlog: WAL performance settings, compile-time macros offline metadata, parallel ingestion, and asset-specific annualization.
+- Constraints: None.
+- Done:
+  - Enabled WAL mode and Normal synchronization in [cache.rs](file:///c:/Users/lucas/Code/CDG/src/cache.rs#L38-L42).
+  - Replaced runtime SQL queries with compile-time checked `sqlx::query!` macros in [cache.rs](file:///c:/Users/lucas/Code/CDG/src/cache.rs#L55-L94).
+  - Generated `.sqlx/` offline metadata directory in the project root to support offline compilation.
+  - Implemented parallel CoinGecko charts/OHLC data fetching using `tokio::task::JoinSet` and `tokio::sync::Semaphore` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L420-L490).
+  - Added CLI flag `--concurrency` (env `COINGECKO_CONCURRENCY`) to control concurrent requests.
+  - Updated [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L44-L185) to dynamically scale returns and covariance matrices using asset-specific annualization factors.
+  - Added heuristic logic to classify asset class (Crypto -> 365, Stocks -> 252) and added CLI flag `--annualization-factor` (env `ANNUALIZATION_FACTOR`) to override all factors to a single custom value.
+  - Added unit test `test_asset_specific_annualization` in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L353-L373) and updated existing test files.
+  - Cleared all implemented items from [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md).
+  - Updated specifications in [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md).
+- Blocked: None.
+- Risk: CoinGecko free API rate limit (429) might trigger if concurrency is set too high.
+- Artifact: [cache.rs](file:///c:/Users/lucas/Code/CDG/src/cache.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md), [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md), [walkthrough.md](file:///C:/Users/lucas/.gemini/antigravity-ide/brain/728f513f-51b6-4f83-aa45-257d1328dfe4/walkthrough.md).
+- Verification: `$env:SQLX_OFFLINE="true"; cargo test` passed 37 tests.
+- Pending: None.
 
 ### Session 15: Add Customizable Cache TTL
 
@@ -28,66 +51,4 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 - Verification: `cargo test` passed 28/28 tests; `cargo clippy` and `cargo fmt` passed with zero errors/warnings.
 - Pending: None.
 
-### Session 14: Generate Project Documentation
 
-- Date: 2026-07-01
-- Agent: Antigravity
-- Goal: Create modular, comprehensive documentation system in doc/ directory.
-- Constraints: None.
-- Done:
-  - Created [README.md](file:///c:/Users/lucas/Code/CDG/doc/README.md) hub to organize documentation system.
-  - Created [architecture.md](file:///c:/Users/lucas/Code/CDG/doc/architecture.md) detailing ingestion/processing flows and Mermaid diagrams.
-  - Created [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md) detailing CLI commands and interactive pager.
-  - Created [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md) detailing CoinGecko retry mechanisms and SQLite caching logic.
-  - Created [analysis_optimization.md](file:///c:/Users/lucas/Code/CDG/doc/analysis_optimization.md) documenting technical indicators formulas and Monte Carlo simulation.
-  - Created [deployment.md](file:///c:/Users/lucas/Code/CDG/doc/deployment.md) covering output folder structure and containerization / GCP Cloud Run integration.
-  - Modified root [README.md](file:///c:/Users/lucas/Code/CDG/README.md) to link to the new documentation files, added the header navigation bar, and resolved MD040 linter warnings on fenced code blocks.
-- Blocked: None.
-- Risk: None.
-- Artifact: `doc/` directory files: `doc/README.md`, `doc/architecture.md`, `doc/installation_usage.md`, `doc/api_cache.md`, `doc/analysis_optimization.md`, `doc/deployment.md`.
-- Verification: Passed `cargo test` successfully (all 27 tests passed).
-- Pending: None.
-
-### Session 13: AI Engineering Infrastructure Sync
-
-- Date: 2026-07-01
-- Agent: Antigravity
-- Goal: Mirror CDGonGCP's AI engineering setup (skills, rules, docs) into CDG workspace.
-- Constraints: Preserve CDG project-specific content (SPEC.md, PROGRESS.md, BACKLOG.md, ADRs).
-- Done:
-  - Added 3 new rules to `.agents/rules/`: `harness.md`, `structure.md`, `workflow.md`.
-  - Updated `rules/engineering.md`: added Rule 7 (Relative Paths), fixed blocker link to `rules/workflow.md`.
-  - Updated `rules/safety.md`: removed stale TASKS.md reference.
-  - Updated `rules/load.md`: replaced root file links with rules/ equivalents; removed TASKS refs.
-  - Updated `rules/structure.md`: reflects actual `.agents/` root; added `etc/` dir; removed stale entries.
-  - Added 4 new engineering skills: `archive_progress`, `clean_architecture`, `finish_session`, `spec_triage`.
-  - Added 1 new productivity skill: `project_documentation`.
-  - Deleted obsolete `.agents/` root files: `HARNESS.md`, `STRUCTURE.md`, `WORKFLOW.md`, `TASKS.md`, `TASKS_ARCHIVE.md`.
-  - Created `.agents/etc/` dir; copied `cdg-lib-migration-candidates.md` from CDGonGCP.
-  - Aligned `.agentignore` with CDGonGCP format (normalized db glob patterns, fixed DS_Store casing).
-  - Aligned `.gitignore` with CDGonGCP (added `.kilo/.gemini/.claude`; normalized db patterns; restored Python runtime artifacts for skill scripts; removed packaging bloat).
-- Blocked: None.
-- Risk: None — infrastructure only, no source code touched.
-- Artifact: `.agents/rules/`, `.agents/skills/engineering/`, `.agents/skills/productivity/`, `.agents/etc/cdg-lib-migration-candidates.md`.
-- Verification: Manual — all rule files reference valid paths; all new skill SKILL.md files present.
-- Pending: CDG lib migration work (see `.agents/etc/cdg-lib-migration-candidates.md`).
-
-### Session 12: Interactive CLI and Raw OHLCV Exporter Enhancements
-
-- Date: June 13, 2026
-- Agent: Antigravity
-- Done: Added raw OHLCV folder output, improved CLI pager UX with terminal clearing and a [Back] button, and updated coin listing to fetch/display top 50 coins by market cap.
-- Actions:
-  - main.rs:
-    - Implemented clear_terminal and wait_for_back helpers.
-    - Cleared terminal before displaying the interactive menu and executing actions.
-    - Appended [Back] button logic at the end of non-Exit options.
-    - Saved fetched raw OHLCV data to `cdg_files/can_YYYYMMDD_HHMMSS` as JSON and CSV in run_pipeline_flow and run_ohlcv_flow.
-    - Modified list-coins subcommand and interactive "List Supported Coins" menu action to query the `/coins/markets` endpoint (sorted by market cap desc) instead of `/coins/list`.
-  - Spec: Updated [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md) with functional requirements FR13, FR16 and FR17.
-- Verification:
-  - Run `cargo fmt -- --check`: 100% clean.
-  - Run `cargo clippy -- -D warnings`: 100% clean.
-  - Run `cargo test`: Passed all 27 tests.
-  - Manual verification: Verified list-coins prints top 50 by market cap with price and market cap columns.
-- Pending: None.

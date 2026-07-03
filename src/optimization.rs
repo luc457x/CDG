@@ -1,14 +1,6 @@
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
-/// Annualization factor used for both return and volatility scaling.
-///
-/// Crypto markets trade 24/7/365, so 365 is the correct factor for a pure-crypto
-/// portfolio. For mixed crypto/stock portfolios this slightly overstates stock
-/// volatility (convention is 252 trading days), which is documented here as a
-/// known limitation. A dedicated per-asset factor can be introduced if needed.
-const TRADING_DAYS_PER_YEAR: f64 = 365.0;
-
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Portfolio {
     pub weights: Vec<f64>,
@@ -49,16 +41,24 @@ impl Xorshift {
     }
 }
 
-#[allow(clippy::needless_range_loop)]
 pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
+    factors: &[f64],
     num_simulations: usize,
     seed: Option<u64>,
 ) -> Result<OptimizationResult> {
     let m = assets.len();
     if m == 0 {
         return Err(anyhow!("No assets provided for portfolio optimization"));
+    }
+
+    if factors.len() != m {
+        return Err(anyhow!(
+            "Mismatch between number of assets ({}) and annualization factors ({})",
+            m,
+            factors.len()
+        ));
     }
 
     if df.height() < 2 {
@@ -94,25 +94,32 @@ pub fn run_monte_carlo(
     }
 
     // 2. Compute mean returns (daily)
-    let mut mean_returns = vec![0.0; m];
+    let mut daily_mean_returns = vec![0.0; m];
     for i in 0..m {
         let sum: f64 = returns[i].iter().sum();
-        mean_returns[i] = sum / t as f64;
+        daily_mean_returns[i] = sum / t as f64;
     }
 
-    // 3. Compute covariance matrix (daily)
+    // 3. Compute covariance matrix (annualized)
     let mut cov_matrix = vec![vec![0.0; m]; m];
     for i in 0..m {
         for j in 0..m {
             let mut sum = 0.0;
             for k in 0..t {
-                sum += (returns[i][k] - mean_returns[i]) * (returns[j][k] - mean_returns[j]);
+                sum += (returns[i][k] - daily_mean_returns[i]) * (returns[j][k] - daily_mean_returns[j]);
             }
-            cov_matrix[i][j] = sum / (t - 1).max(1) as f64;
+            let daily_cov = sum / (t - 1).max(1) as f64;
+            cov_matrix[i][j] = daily_cov * (factors[i] * factors[j]).sqrt();
         }
     }
 
-    // 4. Run Monte Carlo simulations
+    // 4. Compute expected returns (annualized)
+    let mut mean_returns = vec![0.0; m];
+    for i in 0..m {
+        mean_returns[i] = daily_mean_returns[i] * factors[i];
+    }
+
+    // 5. Run Monte Carlo simulations
     let mut max_sharpe_portfolio = Portfolio {
         weights: vec![0.0; m],
         annualized_return: f64::NEG_INFINITY,
@@ -162,13 +169,13 @@ pub fn run_monte_carlo(
                 weights[j] /= sum;
             }
 
-            // Daily portfolio expected return
+            // Annualized portfolio expected return
             let mut p_ret = 0.0;
             for j in 0..m {
                 p_ret += weights[j] * mean_returns[j];
             }
 
-            // Daily portfolio variance
+            // Annualized portfolio variance
             let mut p_var = 0.0;
             for j in 0..m {
                 for k in 0..m {
@@ -177,18 +184,15 @@ pub fn run_monte_carlo(
             }
             let p_vol = p_var.sqrt();
 
-            // Annualize (using TRADING_DAYS_PER_YEAR)
-            let ann_ret = p_ret * TRADING_DAYS_PER_YEAR;
-            let ann_vol = p_vol * TRADING_DAYS_PER_YEAR.sqrt();
-            let sharpe = if ann_vol > 0.0 {
-                ann_ret / ann_vol
+            let sharpe = if p_vol > 0.0 {
+                p_ret / p_vol
             } else {
                 0.0
             };
 
             // Convert return and vol to percentages for plotting & UI
-            let ann_ret_pct = ann_ret * 100.0;
-            let ann_vol_pct = ann_vol * 100.0;
+            let ann_ret_pct = p_ret * 100.0;
+            let ann_vol_pct = p_vol * 100.0;
 
             (weights, ann_ret_pct, ann_vol_pct, sharpe)
         })
@@ -327,7 +331,8 @@ mod tests {
         .unwrap();
 
         let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
-        let result = run_monte_carlo(&df, &assets, 500, None).unwrap();
+        let factors = vec![365.0, 365.0];
+        let result = run_monte_carlo(&df, &assets, &factors, 500, None).unwrap();
 
         // Verify simulated points count
         assert_eq!(result.simulated_points.len(), 500);
@@ -342,6 +347,29 @@ mod tests {
         assert!(
             result.min_volatility.annualized_volatility <= result.max_sharpe.annualized_volatility
         );
+    }
+
+    #[test]
+    fn test_asset_specific_annualization() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03"]),
+            Series::new("asset_a", vec![100.0, 101.0, 102.0]),
+            Series::new("asset_b", vec![10.0, 9.8, 10.1]),
+        ])
+        .unwrap();
+
+        let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
+        // Different factors
+        let factors_diff = vec![365.0, 252.0];
+        let result_diff = run_monte_carlo(&df, &assets, &factors_diff, 500, Some(42)).unwrap();
+
+        // Standard factors
+        let factors_same = vec![365.0, 365.0];
+        let result_same = run_monte_carlo(&df, &assets, &factors_same, 500, Some(42)).unwrap();
+
+        // Verify that different factors lead to different annualized outcomes
+        assert_ne!(result_diff.max_sharpe.annualized_return, result_same.max_sharpe.annualized_return);
+        assert_ne!(result_diff.max_sharpe.annualized_volatility, result_same.max_sharpe.annualized_volatility);
     }
 
     #[test]

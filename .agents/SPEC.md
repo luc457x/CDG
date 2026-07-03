@@ -58,16 +58,19 @@ Port the python CoinGecko and Yahoo Finance data collector to a robust, modular,
 - **FR15 (Raw OHLCV Export)**: Subcommand and interactive menu for OHLCV must support printing raw OHLCV to stdout or exporting it to JSON/CSV files.
 - **FR16 (Raw OHLCV Folder Export)**: During pipeline runs, raw OHLCV files (both JSON and CSV format) must be saved inside a folder named `can_YYYYMMDD_HHMMSS` within `cdg_files`.
 - **FR17 (Interactive CLI Less-like Pager UX)**: In interactive mode, selecting any action must clear the terminal, run the action, print all info to stdout, and display a `[Back]` button. Selecting `[Back]` returns to the main actions menu (which is also displayed on a cleared terminal).
-
+- **FR18 (Parallel Ingestion Concurrency Control)**: Parallel ingestion of CoinGecko charts and OHLC data must use a semaphore-based concurrency control defaulting to 3, configurable via CLI flag `--concurrency` and env var `COINGECKO_CONCURRENCY`.
+- **FR19 (Asset-Specific Annualization)**: Portfolio expected returns and volatilities must be annualized using dynamic factors (365.0 for Crypto, 252.0 for Traditional stocks/benchmarks). An override CLI flag `--annualization-factor` or env var `ANNUALIZATION_FACTOR` can override all factors to a single custom value.
 
 ## 5. Business Rules (BR)
 
 - **BR01**: Default coin identifier is always `bitcoin` (BTC) and default currency is `usd`.
 - **BR02**: Cache hits bypass network requests entirely if `cached_at` is less than 5 minutes old (or configurable).
 - **BR03**: Forward-fill weekend stock data replicates Friday's closing values to Saturday and Sunday.
+- **BR04**: The heuristic to determine asset class maps assets in the CoinGecko coin list or ending in `-USD`/`-EUR` to Crypto (365.0), and others (like index symbols starting with `^` or standard tickers) to Traditional (252.0).
 
 ## 6. Non-Functional Requirements (NFR)
 
 - **NFR01 (Perf)**: System memory consumption under `--light` mode must remain below 100MB to fit within GCP Free Tier Cloud Run / VM instances.
 - **NFR02 (Portability)**: Output formats must be standardized (Parquet, CSV) to integrate natively with Python Pandas/Jupyter and GCP BigQuery/Cloud Storage.
-- **NFR03 (Extensibility)**: DB layer using `sqlx` must compile-time verify queries, allowing migration to GCP PostgreSQL/MySQL with minimal code changes.
+- **NFR03 (Extensibility)**: DB layer using `sqlx` must compile-time verify queries, allowing migration to GCP PostgreSQL/MySQL with minimal code changes. Offline compilation is supported using prepared `.sqlx/` metadata.
+- **NFR04 (SQLite Performance)**: SQLite cache database connection must enable Write-Ahead Logging (WAL) mode (`journal_mode=WAL`) and `synchronous=NORMAL` to prevent concurrent write database locking errors.

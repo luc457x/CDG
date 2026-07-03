@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TABLE IF NOT EXISTS api_cache (\n                url TEXT PRIMARY KEY,\n                response_body TEXT NOT NULL,\n                cached_at_timestamp INTEGER NOT NULL\n            );",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "13a9b8e51f8f556d82f8fab4756167c41a1ae7cbe9a94301353139cb96760420"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT response_body, cached_at_timestamp FROM api_cache WHERE url = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "response_body",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "cached_at_timestamp",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "93a38e7dfa29a6c498390855a79d1402beb589ee887c269b1cddbf1bad50b8b2"
+}
