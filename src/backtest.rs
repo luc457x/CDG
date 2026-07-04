@@ -866,6 +866,8 @@ pub fn backtest_portfolio(
     portfolio_name: &str,
     annualization_factor: f64,
     days_to_backtest: usize,
+    fee: f64,
+    slippage: f64,
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
     let n_assets = assets.len();
     if n_assets == 0 || weights.len() != n_assets {
@@ -972,7 +974,18 @@ pub fn backtest_portfolio(
             let asset_ret = returns_series[j][i];
             daily_ret += weights[j] * asset_ret;
         }
-        equity[i] = equity[i - 1] * (1.0 + daily_ret / 100.0);
+        let equity_before_fees = equity[i - 1] * (1.0 + daily_ret / 100.0);
+
+        // Compute rebalancing trade volumes and associated fees
+        let mut total_trade_volume = 0.0;
+        for j in 0..n_assets {
+            let asset_ret = returns_series[j][i];
+            let actual_value = weights[j] * equity[i - 1] * (1.0 + asset_ret / 100.0);
+            let target_value = weights[j] * equity_before_fees;
+            total_trade_volume += (target_value - actual_value).abs();
+        }
+        let transaction_fees = total_trade_volume * (fee + slippage);
+        equity[i] = (equity_before_fees - transaction_fees).max(0.0);
 
         // Buy & Hold (no rebalancing) portfolio return
         let mut bh_val = 0.0;
@@ -999,6 +1012,7 @@ pub fn backtest_portfolio(
 
     let final_strat_return = ((equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
     let final_bh_return = ((bh_equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
+
 
     let tnx_col: Option<Vec<Option<f64>>> = df
         .column("^TNX")
@@ -1127,7 +1141,7 @@ mod tests {
         let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
         let weights = vec![0.6, 0.4];
 
-        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30).unwrap();
+        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.001, 0.0005).unwrap();
         assert_eq!(metrics.coin, "max_sharpe");
         assert_eq!(metrics.currency, "portfolio");
         assert_eq!(metrics.strategy, "rebalanced");
