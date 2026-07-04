@@ -22,6 +22,7 @@ pub struct PipelineConfig<'a> {
     pub strategy: &'a str,
     pub fee: f64,
     pub slippage: f64,
+    pub rebalance_frequency: &'a str,
 }
 
 pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
@@ -60,6 +61,7 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let strategy = config.strategy;
     let fee = config.fee;
     let slippage = config.slippage;
+    let rebalance_frequency = config.rebalance_frequency;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let run_dir = format!("{}/run_{}", output_dir, timestamp);
@@ -653,6 +655,7 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 days as usize,
                 fee,
                 slippage,
+                rebalance_frequency,
             ) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
@@ -685,6 +688,7 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 days as usize,
                 fee,
                 slippage,
+                rebalance_frequency,
             ) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
@@ -899,6 +903,7 @@ pub async fn run_standalone_backtest(
     strategy: &str,
     fee: f64,
     slippage: f64,
+    _rebalance_frequency: &str,
 ) -> Result<()> {
     println!("Starting CDG Standalone Backtester...");
     println!("Target Coin(s): {}", coin);

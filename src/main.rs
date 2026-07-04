@@ -84,6 +84,10 @@ pub enum Commands {
         /// Slippage as decimal (default: 0.0005)
         #[arg(long, default_value_t = 0.0005, env = "CDG_SLIPPAGE")]
         slippage: f64,
+
+        /// Portfolio rebalancing frequency: 'daily', 'weekly', or 'monthly' (default: daily)
+        #[arg(long, default_value = "daily", env = "CDG_REBALANCE_FREQUENCY")]
+        rebalance_frequency: String,
     },
     /// Retrieve and backtest strategy on a coin
     Backtest {
@@ -110,6 +114,10 @@ pub enum Commands {
         /// Slippage as decimal (default: 0.0005)
         #[arg(long, default_value_t = 0.0005)]
         slippage: f64,
+
+        /// Portfolio rebalancing frequency: 'daily', 'weekly', or 'monthly' (default: daily)
+        #[arg(long, default_value = "daily", env = "CDG_REBALANCE_FREQUENCY")]
+        rebalance_frequency: String,
     },
     /// Ping CoinGecko and Yahoo Finance API servers
     Ping,
@@ -187,6 +195,7 @@ async fn main() -> Result<()> {
             strategy,
             fee,
             slippage,
+            rebalance_frequency,
         }) => {
             pipeline::run_pipeline_flow(pipeline::PipelineConfig {
                 coin: &coin,
@@ -207,6 +216,7 @@ async fn main() -> Result<()> {
                 strategy: &strategy,
                 fee,
                 slippage,
+                rebalance_frequency: &rebalance_frequency,
             })
             .await?;
         }
@@ -217,6 +227,7 @@ async fn main() -> Result<()> {
             strategy,
             fee,
             slippage,
+            rebalance_frequency,
         }) => {
             pipeline::run_standalone_backtest(
                 &db_path,
@@ -229,6 +240,7 @@ async fn main() -> Result<()> {
                 &strategy,
                 fee,
                 slippage,
+                &rebalance_frequency,
             )
             .await?;
         }

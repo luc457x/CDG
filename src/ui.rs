@@ -150,7 +150,7 @@ pub async fn run_interactive_menu(
                     .default(false)
                     .interact()?;
 
-                let (strategy, fee, slippage) = if backtest {
+                let (strategy, fee, slippage, rebalance_frequency) = if backtest {
                     let strat_options = &["RSI", "MACD", "Bollinger Bands", "All (Compare)"];
                     let selection = dialoguer::Select::new()
                         .with_prompt("Select backtest strategy")
@@ -175,9 +175,22 @@ pub async fn run_interactive_menu(
                         .default(0.0005)
                         .interact_text()?;
 
-                    (strategy_str.to_string(), fee, slippage)
+                    let freq_options = &["daily", "weekly", "monthly"];
+                    let freq_selection = dialoguer::Select::new()
+                        .with_prompt("Select rebalancing frequency")
+                        .default(0)
+                        .items(freq_options)
+                        .interact()?;
+                    let freq_str = match freq_selection {
+                        0 => "daily",
+                        1 => "weekly",
+                        2 => "monthly",
+                        _ => "daily",
+                    };
+
+                    (strategy_str.to_string(), fee, slippage, freq_str.to_string())
                 } else {
-                    ("rsi".to_string(), 0.001, 0.0005)
+                    ("rsi".to_string(), 0.001, 0.0005, "daily".to_string())
                 };
 
                 println!("\nRunning pipeline...\n");
@@ -200,6 +213,7 @@ pub async fn run_interactive_menu(
                     strategy: &strategy,
                     fee,
                     slippage,
+                    rebalance_frequency: &rebalance_frequency,
                 })
                 .await
                 {

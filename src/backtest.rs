@@ -868,6 +868,7 @@ pub fn backtest_portfolio(
     days_to_backtest: usize,
     fee: f64,
     slippage: f64,
+    rebalance_frequency: &str,
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
     let n_assets = assets.len();
     if n_assets == 0 || weights.len() != n_assets {
@@ -966,26 +967,76 @@ pub fn backtest_portfolio(
         .map(|j| close_series[j][start_idx])
         .collect();
 
+    // Track active values of each asset (initially target weight * initial equity)
+    let mut current_values: Vec<f64> = weights.iter().map(|&w| w * 10000.0).collect();
+
+    let date_col = df.column("date")?.str()?;
+
     // Fill equity curves from start_idx onwards
     for i in (start_idx + 1)..n_rows {
-        // Daily rebalanced portfolio return (compounded as decimal, simple returns are in %)
-        let mut daily_ret = 0.0;
+        // Compute new asset values before rebalancing/fees
+        let mut new_values = vec![0.0; n_assets];
         for j in 0..n_assets {
             let asset_ret = returns_series[j][i];
-            daily_ret += weights[j] * asset_ret;
+            new_values[j] = current_values[j] * (1.0 + asset_ret / 100.0);
         }
-        let equity_before_fees = equity[i - 1] * (1.0 + daily_ret / 100.0);
+        let equity_before_fees: f64 = new_values.iter().sum();
 
-        // Compute rebalancing trade volumes and associated fees
-        let mut total_trade_volume = 0.0;
-        for j in 0..n_assets {
-            let asset_ret = returns_series[j][i];
-            let actual_value = weights[j] * equity[i - 1] * (1.0 + asset_ret / 100.0);
-            let target_value = weights[j] * equity_before_fees;
-            total_trade_volume += (target_value - actual_value).abs();
+        // Check if calendar frequency triggers rebalancing
+        let mut should_rebalance = false;
+        let date_str_prev = date_col.get(i - 1).unwrap_or("");
+        let date_str_curr = date_col.get(i).unwrap_or("");
+        match rebalance_frequency.to_lowercase().as_str() {
+            "weekly" => {
+                if let (Ok(d_prev), Ok(d_curr)) = (
+                    chrono::NaiveDate::parse_from_str(date_str_prev, "%Y-%m-%d"),
+                    chrono::NaiveDate::parse_from_str(date_str_curr, "%Y-%m-%d"),
+                ) {
+                    use chrono::Datelike;
+                    should_rebalance = d_prev.iso_week().week() != d_curr.iso_week().week()
+                        || d_prev.iso_week().year() != d_curr.iso_week().year();
+                } else {
+                    should_rebalance = true;
+                }
+            }
+            "monthly" => {
+                if let (Ok(d_prev), Ok(d_curr)) = (
+                    chrono::NaiveDate::parse_from_str(date_str_prev, "%Y-%m-%d"),
+                    chrono::NaiveDate::parse_from_str(date_str_curr, "%Y-%m-%d"),
+                ) {
+                    use chrono::Datelike;
+                    should_rebalance = d_prev.month() != d_curr.month()
+                        || d_prev.year() != d_curr.year();
+                } else {
+                    should_rebalance = true;
+                }
+            }
+            _ => {
+                // "daily" or anything else
+                should_rebalance = true;
+            }
         }
-        let transaction_fees = total_trade_volume * (fee + slippage);
-        equity[i] = (equity_before_fees - transaction_fees).max(0.0);
+
+        if should_rebalance {
+            // Compute rebalancing trade volumes and associated fees
+            let mut total_trade_volume = 0.0;
+            for j in 0..n_assets {
+                let target_value = weights[j] * equity_before_fees;
+                total_trade_volume += (target_value - new_values[j]).abs();
+            }
+            let transaction_fees = total_trade_volume * (fee + slippage);
+            let equity_after = (equity_before_fees - transaction_fees).max(0.0);
+            equity[i] = equity_after;
+
+            // Reset asset values to target weights
+            for j in 0..n_assets {
+                current_values[j] = weights[j] * equity_after;
+            }
+        } else {
+            // Keep values drifting without rebalancing or fees
+            equity[i] = equity_before_fees;
+            current_values = new_values;
+        }
 
         // Buy & Hold (no rebalancing) portfolio return
         let mut bh_val = 0.0;
@@ -1141,7 +1192,7 @@ mod tests {
         let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
         let weights = vec![0.6, 0.4];
 
-        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.001, 0.0005).unwrap();
+        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.001, 0.0005, "daily").unwrap();
         assert_eq!(metrics.coin, "max_sharpe");
         assert_eq!(metrics.currency, "portfolio");
         assert_eq!(metrics.strategy, "rebalanced");
@@ -1149,6 +1200,41 @@ mod tests {
         assert_eq!(bh_equity.len(), 4);
         assert!(metrics.strategy_return != 0.0);
         assert!(metrics.buy_and_hold_return != 0.0);
+    }
+
+    #[test]
+    fn test_backtest_portfolio_frequencies() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec![
+                "2026-06-01",
+                "2026-06-02",
+                "2026-06-08",
+                "2026-06-09",
+                "2026-07-01",
+            ]),
+            Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0, 115.0]),
+            Series::new("bitcoin_usd_simple_return", vec![0.0, 5.0, -9.52, 15.79, 4.54]),
+            Series::new("ethereum_usd", vec![10.0, 11.0, 9.5, 12.0, 13.0]),
+            Series::new("ethereum_usd_simple_return", vec![0.0, 10.0, -13.63, 26.31, 8.33]),
+        ]).unwrap();
+
+        let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
+        let weights = vec![0.6, 0.4];
+
+        // Weekly rebalancing
+        let (metrics_w, equity_w, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "weekly").unwrap();
+        // Monthly rebalancing
+        let (metrics_m, equity_m, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "monthly").unwrap();
+        // Daily rebalancing
+        let (metrics_d, equity_d, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "daily").unwrap();
+
+        assert_eq!(equity_w.len(), 5);
+        assert_eq!(equity_m.len(), 5);
+        assert_eq!(equity_d.len(), 5);
+
+        // Different frequencies must yield different end equity due to transaction fees
+        assert!(equity_d[4] != equity_w[4]);
+        assert!(equity_w[4] != equity_m[4]);
     }
 
     #[test]
