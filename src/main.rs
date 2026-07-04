@@ -933,6 +933,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 let bb_mid_col = format!("{}_sma_20", coin);
                 let bb_mid: Option<Vec<Option<f64>>> = final_df.column(&bb_mid_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
 
+                let mut first_valid_idx = 0;
                 for i in 0..n_rows {
                     let price_ok = prices[i].is_some();
                     let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
@@ -944,10 +945,15 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                         && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
 
                     if price_ok && rsi_ok && macd_ok && bb_ok {
-                        start_idx = i;
+                        first_valid_idx = i;
                         break;
                     }
                 }
+                start_idx = if n_rows > days as usize {
+                    (n_rows - 1 - days as usize).max(first_valid_idx)
+                } else {
+                    first_valid_idx
+                };
             }
 
             let tnx_col: Vec<Option<f64>> = final_df.column("^TNX")?.f64()?.into_iter().collect();
