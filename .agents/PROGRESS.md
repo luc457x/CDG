@@ -2,12 +2,29 @@
 
 ## Status
 
-- State: Backlog item implemented (CLI progress bar updates for rate limits).
-- Last: Configured clients to update indicatif progress bar status inline instead of printing to stderr.
+- State: Dynamic risk-free rate (^TNX) integrated in portfolio optimization and backtesting Sharpe ratios.
+- Last: Fetched treasury yield, calculated risk-free rate adjustments, and verified Sharpe ratio calculations across 46 unit tests.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 27: Implement Dynamic Risk-Free Rate
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Integrate dynamic US 10-year Treasury Note yield (^TNX) as the risk-free rate for portfolio optimization and backtesting Sharpe ratio metrics.
+- Constraints: None.
+- Done:
+  - Added `^TNX` to Yahoo Finance benchmark fetch in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L668-L685) and excluded it from index plotting.
+  - Implemented average annual risk-free rate parsing and Sharpe excess return optimizations in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L143-L215).
+  - Refactored `calculate_sharpe` in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L79-L652) to accept `rf_rate` and compute excess-adjusted Sharpe ratios cleanly.
+  - Added unit test `test_backtest_with_risk_free_rate` in [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs#L156-L181).
+- Blocked: None.
+- Risk: None.
+- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs).
+- Verification: `cargo test` - 46 tests passed. Pipeline execution verified to fetch yield and output risk-free adjusted Sharpe ratios correctly.
+- Pending: None.
 
 ### Session 26: Implement CLI Warning Polish
 

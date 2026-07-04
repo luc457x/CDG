@@ -668,7 +668,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
     if !light {
         let yahoo_client = yahoo_client.with_progress_bar(pb.clone());
-        let bench_tickers = vec!["^GSPC", "^DJI", "^IXIC", "^HSI", "^BVSP"];
+        let bench_tickers = vec!["^GSPC", "^DJI", "^IXIC", "^HSI", "^BVSP", "^TNX"];
         for ticker in bench_tickers {
             pb.set_message(format!("Fetching Yahoo Finance data for {}...", ticker));
             match yahoo_client
@@ -679,7 +679,9 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     Ok(df) => {
                         pb.set_message(format!("Loaded {} rows for {}", df.height(), ticker));
                         other_dfs.push(df);
-                        assets_to_plot.push(ticker.to_string());
+                        if ticker != "^TNX" {
+                            assets_to_plot.push(ticker.to_string());
+                        }
                     }
                     Err(e) => pb.println(format!("Error parsing JSON for {}: {}", ticker, e)),
                 },

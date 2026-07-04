@@ -143,6 +143,19 @@ pub fn run_monte_carlo(
         mean_returns[i] = daily_mean_returns[i] * annualization_factor;
     }
 
+    let r_f_annual = if let Ok(tnx_col) = df.column("^TNX") {
+        let tnx_series = tnx_col.f64()?;
+        let sum: f64 = tnx_series.into_iter().flatten().sum();
+        let count = tnx_series.into_iter().flatten().count();
+        if count > 0 {
+            (sum / count as f64) / 100.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
     // 5. Run Monte Carlo simulations
     let mut max_sharpe_portfolio = Portfolio {
         weights: vec![0.0; m],
@@ -209,7 +222,7 @@ pub fn run_monte_carlo(
             }
             let p_vol = p_var.sqrt();
 
-            let sharpe = if p_vol > 0.0 { p_ret / p_vol } else { 0.0 };
+            let sharpe = if p_vol > 0.0 { (p_ret - r_f_annual) / p_vol } else { 0.0 };
 
             // Convert return and vol to percentages for plotting & UI
             let ann_ret_pct = p_ret * 100.0;

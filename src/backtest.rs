@@ -79,7 +79,7 @@ pub fn calculate_r2(actuals: &[f64], predicted: &[f64]) -> f64 {
     1.0 - (ss_res / ss_tot)
 }
 
-pub fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
+pub fn calculate_sharpe(returns: &[f64], rf_rate: f64, annualization_factor: f64) -> f64 {
     if returns.is_empty() {
         return 0.0;
     }
@@ -95,7 +95,7 @@ pub fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
     if std_dev == 0.0 {
         return 0.0;
     }
-    (mean / std_dev) * annualization_factor.sqrt()
+    ((mean - rf_rate) / std_dev) * annualization_factor.sqrt()
 }
 
 pub fn calculate_max_drawdown(equity: &[f64]) -> f64 {
@@ -382,8 +382,27 @@ pub fn run_backtest_for_asset(
     let strategy_returns_slice = &strategy_returns[(start_idx + 1)..n];
     let signals_slice = &signals[(start_idx + 1)..n];
 
-    let strat_sharpe = calculate_sharpe(strategy_returns_slice, annualization_factor);
-    let bh_sharpe = calculate_sharpe(actual_returns_slice, annualization_factor);
+    let tnx_col: Option<Vec<Option<f64>>> = df
+        .column("^TNX")
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+
+    let mean_rf = if let Some(ref y_vec) = tnx_col {
+        let slice = &y_vec[(start_idx + 1)..n];
+        let sum: f64 = slice.iter().flatten().copied().sum();
+        let count = slice.iter().flatten().count();
+        if count > 0 {
+            let avg_annual = (sum / count as f64) / 100.0;
+            avg_annual / annualization_factor
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    let strat_sharpe = calculate_sharpe(strategy_returns_slice, mean_rf, annualization_factor);
+    let bh_sharpe = calculate_sharpe(actual_returns_slice, mean_rf, annualization_factor);
 
     let strat_drawdown = calculate_max_drawdown(&equity[start_idx..n]) * 100.0;
     let bh_drawdown = calculate_max_drawdown(&bh_equity[start_idx..n]) * 100.0;
@@ -586,8 +605,27 @@ pub fn backtest_portfolio(
     let final_strat_return = ((equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
     let final_bh_return = ((bh_equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
 
-    let strat_sharpe = calculate_sharpe(&strat_returns, annualization_factor);
-    let bh_sharpe = calculate_sharpe(&bh_returns, annualization_factor);
+    let tnx_col: Option<Vec<Option<f64>>> = df
+        .column("^TNX")
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+
+    let mean_rf = if let Some(ref y_vec) = tnx_col {
+        let slice = &y_vec[(start_idx + 1)..n_rows];
+        let sum: f64 = slice.iter().flatten().copied().sum();
+        let count = slice.iter().flatten().count();
+        if count > 0 {
+            let avg_annual = (sum / count as f64) / 100.0;
+            avg_annual / annualization_factor
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    let strat_sharpe = calculate_sharpe(&strat_returns, mean_rf, annualization_factor);
+    let bh_sharpe = calculate_sharpe(&bh_returns, mean_rf, annualization_factor);
 
     let strat_drawdown = calculate_max_drawdown(&equity[start_idx..n_rows]) * 100.0;
     let bh_drawdown = calculate_max_drawdown(&bh_equity[start_idx..n_rows]) * 100.0;
@@ -641,7 +679,7 @@ mod tests {
     #[test]
     fn test_calculate_sharpe() {
         let returns = vec![0.01, 0.02, -0.01, 0.015];
-        let sharpe = calculate_sharpe(&returns, 365.0);
+        let sharpe = calculate_sharpe(&returns, 0.0, 365.0);
         assert!(sharpe > 0.0);
     }
 
