@@ -4,5 +4,7 @@ pub mod backtest;
 pub mod cache;
 pub mod export;
 pub mod optimization;
+pub mod pipeline;
 pub mod plot;
+pub mod ui;
 pub mod utils;
