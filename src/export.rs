@@ -24,7 +24,6 @@ pub fn export_parquet(df: &mut DataFrame, path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use polars::prelude::*;
 
     #[test]
     fn test_exports() {

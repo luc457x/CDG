@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use polars::prelude::*;
 use std::io::Write;
 use crate::{analysis, api, cache, export, plot, backtest};
 
