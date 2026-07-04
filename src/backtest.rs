@@ -205,6 +205,7 @@ pub fn run_backtest_for_asset(
     fee: f64,
     slippage: f64,
     annualization_factor: f64,
+    days_to_backtest: usize,
     bh_cache: &mut Option<BhCache>,
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
     let close_col = if df.column(&format!("{}_close", coin)).is_ok() {
@@ -255,7 +256,7 @@ pub fn run_backtest_for_asset(
         _ => return Err(anyhow!("Unknown strategy: {}", strategy_name)),
     }
 
-    let mut start_idx = 0;
+    let mut first_valid_idx = 0;
     for i in 0..n {
         let price_ok = prices[i].is_some();
         let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
@@ -267,10 +268,16 @@ pub fn run_backtest_for_asset(
             && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
 
         if price_ok && rsi_ok && macd_ok && bb_ok {
-            start_idx = i;
+            first_valid_idx = i;
             break;
         }
     }
+
+    let start_idx = if n > days_to_backtest {
+        (n - 1 - days_to_backtest).max(first_valid_idx)
+    } else {
+        first_valid_idx
+    };
 
     if start_idx >= n - 1 {
         return Err(anyhow!("No sufficient valid data points to backtest {}", coin));
@@ -475,7 +482,7 @@ pub fn run_backtest_for_asset(
         total_trades,
     };
 
-    Ok((metrics, equity, bh_equity))
+    Ok((metrics, equity[start_idx..n].to_vec(), bh_equity[start_idx..n].to_vec()))
 }
 
 pub fn format_backtest_table(metrics: &[BacktestMetrics]) -> String {
@@ -524,6 +531,7 @@ pub fn backtest_portfolio(
     weights: &[f64],
     portfolio_name: &str,
     annualization_factor: f64,
+    days_to_backtest: usize,
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
     let n_assets = assets.len();
     if n_assets == 0 || weights.len() != n_assets {
@@ -556,7 +564,7 @@ pub fn backtest_portfolio(
     }
 
     // Find the first index where close prices > 0.0 and indicator columns are valid (non-null) if they exist
-    let mut start_idx = 0;
+    let mut first_valid_idx = 0;
     for i in 0..n_rows {
         let mut all_valid = true;
         for j in 0..n_assets {
@@ -598,10 +606,16 @@ pub fn backtest_portfolio(
             }
         }
         if all_valid {
-            start_idx = i;
+            first_valid_idx = i;
             break;
         }
     }
+
+    let start_idx = if n_rows > days_to_backtest {
+        (n_rows - 1 - days_to_backtest).max(first_valid_idx)
+    } else {
+        first_valid_idx
+    };
 
     if start_idx >= n_rows - 1 {
         return Err(anyhow!("No overlapping price data for portfolio backtest"));
@@ -701,7 +715,7 @@ pub fn backtest_portfolio(
         total_trades: 0,
     };
 
-    Ok((metrics, equity, bh_equity))
+    Ok((metrics, equity[start_idx..n_rows].to_vec(), bh_equity[start_idx..n_rows].to_vec()))
 }
 
 #[cfg(test)]
@@ -751,18 +765,18 @@ mod tests {
             Series::new("bitcoin_usd_sma_20", vec![100.0, 100.0, 100.0, 100.0]),
         ]).unwrap();
 
-        let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", 0.001, 0.0005, 365.0, &mut None).unwrap();
+        let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_rsi.coin, "bitcoin".to_string());
         assert_eq!(metrics_rsi.strategy, "rsi".to_string());
         assert_eq!(equity_rsi.len(), 4);
         assert_eq!(bh_rsi.len(), 4);
 
         // MACD strategy
-        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", 0.001, 0.0005, 365.0, &mut None).unwrap();
+        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_macd.strategy, "macd");
 
         // Bollinger strategy
-        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", 0.001, 0.0005, 365.0, &mut None).unwrap();
+        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_bb.strategy, "bollinger");
     }
 
@@ -779,7 +793,7 @@ mod tests {
         let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
         let weights = vec![0.6, 0.4];
 
-        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0).unwrap();
+        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30).unwrap();
         assert_eq!(metrics.coin, "max_sharpe");
         assert_eq!(metrics.currency, "portfolio");
         assert_eq!(metrics.strategy, "rebalanced");

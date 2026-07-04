@@ -475,7 +475,20 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     // 4. Calculate Timestamps (aligned to start of day for caching)
     let now = chrono::Utc::now().timestamp();
     let rounded_now = (now / 86400) * 86400;
-    let days_num: i64 = days as i64;
+    let fetch_days = if backtest {
+        if days <= 40 {
+            90
+        } else if days <= 130 {
+            180
+        } else if days <= 315 {
+            365
+        } else {
+            days + 50
+        }
+    } else {
+        days
+    };
+    let days_num: i64 = fetch_days as i64;
     let from_timestamp = rounded_now - (days_num * 24 * 60 * 60);
     let to_timestamp = rounded_now;
 
@@ -582,7 +595,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         let sem = semaphore.clone();
         let client = cg_client_arc.clone();
         let ohlcv_dir_clone = ohlcv_dir.clone();
-        let days_str = days.to_string();
+        let days_str = fetch_days.to_string();
         let raw_format_clone = raw_format.to_string();
 
         join_set.spawn(async move {
@@ -860,6 +873,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     fee,
                     slippage,
                     final_ann_factor,
+                    days as usize,
                     cache_entry,
                 ) {
                     Ok((metrics, equity, bh_equity)) => {
@@ -873,8 +887,9 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                             .map(|opt| opt.unwrap_or("").to_string())
                             .collect();
                         let plot_path = format!("{}/{}_{}_backtest.png", backtest_dir, col, strat);
+                        let active_dates = dates[dates.len() - equity.len()..].to_vec();
                         if let Err(e) = cdg::plot::plot_backtest_equity(
-                            &dates,
+                            &active_dates,
                             &equity,
                             &bh_equity,
                             col,
@@ -985,13 +1000,15 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 &opt_res.max_sharpe.weights,
                 "max_sharpe",
                 final_ann_factor,
+                days as usize,
             ) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
                     let plot_path = format!("{}/max_sharpe_portfolio_rebalanced_backtest.png", backtest_dir);
+                    let active_dates = dates[dates.len() - equity.len()..].to_vec();
                     if let Err(e) = cdg::plot::plot_backtest_equity(
-                        &dates,
+                        &active_dates,
                         &equity,
                         &bh_equity,
                         "max_sharpe",
@@ -1013,13 +1030,15 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 &opt_res.min_volatility.weights,
                 "min_volatility",
                 final_ann_factor,
+                days as usize,
             ) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
                     let plot_path = format!("{}/min_vol_portfolio_rebalanced_backtest.png", backtest_dir);
+                    let active_dates = dates[dates.len() - equity.len()..].to_vec();
                     if let Err(e) = cdg::plot::plot_backtest_equity(
-                        &dates,
+                        &active_dates,
                         &equity,
                         &bh_equity,
                         "min_volatility",
@@ -1124,7 +1143,16 @@ async fn run_standalone_backtest(
     // 3. Calculate Timestamps
     let now = chrono::Utc::now().timestamp();
     let rounded_now = (now / 86400) * 86400;
-    let days_num: i64 = days as i64;
+    let fetch_days = if days <= 40 {
+        90
+    } else if days <= 130 {
+        180
+    } else if days <= 315 {
+        365
+    } else {
+        days + 50
+    };
+    let days_num: i64 = fetch_days as i64;
     let from_timestamp = rounded_now - (days_num * 24 * 60 * 60);
     let to_timestamp = rounded_now;
 
@@ -1167,7 +1195,7 @@ async fn run_standalone_backtest(
             let price_col_name = format!("{}_{}", c_safe, curr_safe);
             let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
 
-            let days_str = days.to_string();
+            let days_str = fetch_days.to_string();
             let ohlc_val = cg_client.get_coin_ohlc(c, curr, &days_str).await?;
             let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
             let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
@@ -1197,7 +1225,7 @@ async fn run_standalone_backtest(
         let mut bh_cache = None;
         for strat in &strats {
             // Standalone run uses default annualization 365.0
-            match cdg::backtest::run_backtest_for_asset(df, col, strat, fee, slippage, 365.0, &mut bh_cache) {
+            match cdg::backtest::run_backtest_for_asset(df, col, strat, fee, slippage, 365.0, days as usize, &mut bh_cache) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
@@ -1209,8 +1237,9 @@ async fn run_standalone_backtest(
                         .map(|opt| opt.unwrap_or("").to_string())
                         .collect();
                     let plot_path = format!("{}/{}_{}_backtest.png", run_dir, col, strat);
+                    let active_dates = dates[dates.len() - equity.len()..].to_vec();
                     if let Err(e) = cdg::plot::plot_backtest_equity(
-                        &dates,
+                        &active_dates,
                         &equity,
                         &bh_equity,
                         col,

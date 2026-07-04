@@ -2,12 +2,28 @@
 
 ## Status
 
-- State: Backtest output files organized in run_xxxx/backtests subdirectory.
-- Last: Created backtests subdirectory and redirected all backtest plots and report files.
+- State: Backtest flat curves resolved and portfolio plots aligned.
+- Last: Fetched extra historical warm-up data for indicators and sliced returned curves.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 31: Resolve Flat Backtest Curves & Align Plots
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Fix flat curves in backtest plots caused by missing warm-up data for indicators, and slice returned curves to show only active periods.
+- Constraints: None.
+- Done:
+  - Updated historical fetching timestamp range in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L475-L480) to query extra days for indicator warm-up.
+  - Modified [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L484-L486) signature to accept `days_to_backtest` and return sliced active equity curves.
+  - Sliced dates arrays inside [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L880-L1040) before plotting to fit the active backtesting range.
+- Blocked: None.
+- Risk: None.
+- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs).
+- Verification: `cargo test` - 46 tests passed. Pipeline execution verified to trigger active trades (e.g. 4 trades on MACD) and generate correct comparison curves.
+- Pending: None.
 
 ### Session 30: Organize Backtest Output Folders
 
