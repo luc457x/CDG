@@ -74,6 +74,7 @@ pub async fn run_interactive_menu(
 
         match choice {
             "Run Portfolio Pipeline" => {
+                println!("Note: Interactive selections are not saved to disk. To set permanent defaults, edit your .env file.\n");
                 let coin: String = dialoguer::Input::new()
                     .with_prompt("Enter Coin ID(s) (comma-separated)")
                     .default("bitcoin".to_string())
