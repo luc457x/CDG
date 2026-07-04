@@ -1,6 +1,6 @@
 # CryptoDataGather (CDG) Documentation Hub
 
-[🏠 Home](../README.md) • [📖 Overview](README.md) • [🏗️ Architecture](architecture.md) • [💻 Setup](installation_usage.md) • [🔌 API & Cache](api_cache.md) • [📊 Processing & Optimization](analysis_optimization.md) • [🚀 Deployment](deployment.md)
+[🏠 Home](../README.md) • [📖 Overview](README.md) • [🏗️ Architecture](architecture.md) • [💻 Setup](installation_usage.md) • [🔌 API & Cache](api_cache.md) • [📊 Processing & Optimization](analysis_optimization.md) • [⚙️ Custom Strategies](custom_strategies.md) • [🚀 Deployment](deployment.md)
 
 ---
 
@@ -29,5 +29,7 @@ Use the following links to navigate the documentation:
    - Implementation details of CoinGecko and Yahoo Finance API clients, plus the SQLite persistent caching layer.
 4. **[📊 Data Processing & Portfolio Optimization](analysis_optimization.md)**
    - Explains technical indicator calculations (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, OBV, Stochastic, ADX), machine learning preprocessing/scaling (`--prep-ml`), and the Markowitz Mean-Variance optimization engine.
-5. **[🚀 Deployment & Operations](deployment.md)**
+5. **[⚙️ Custom Strategies](custom_strategies.md)**
+   - Defining and running custom logic trees, operators, shifts, and sizing from JSON configurations.
+6. **[🚀 Deployment & Operations](deployment.md)**
    - Standard directory layouts (`cdg_files/`), environment variable requirements, and containerization/GCP orchestration patterns.

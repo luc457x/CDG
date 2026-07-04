@@ -2,12 +2,31 @@
 
 ## Status
 
-- State: Backtest flat curves resolved and portfolio plots aligned.
-- Last: Fetched extra historical warm-up data for indicators and sliced returned curves.
+- State: Custom JSON strategy backtesting engine integrated and documented.
+- Last: Removed word-based operators and enforced mathematical comparison signs globally.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 32: Custom Backtesting Strategy JSON Support
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Implement custom strategy definitions parsed from JSON configs (supporting single, list, and map formats) in standalone backtest and full pipeline commands, using mathematical signs for comparisons and without new dependencies.
+- Constraints: None.
+- Done:
+  - Added recursive `Condition` logic trees and `ConfidenceConfig` structs to [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs).
+  - Modified `run_backtest_for_asset` signature to accept `custom_strat` directly and resolve indicators with coin prefixes.
+  - Implemented `load_custom_strategies` to support single strategy, list of strategies, and map of strategies.
+  - Simplified comparison operators to use mathematical comparison signs (`<`, `>`, `==`, `<=`, `>=`) only.
+  - Updated all unit tests and integration tests.
+  - Added dedicated guide [custom_strategies.md](file:///c:/Users/lucas/Code/CDG/doc/custom_strategies.md) and linked it in all modular documents.
+- Blocked: None.
+- Risk: None.
+- Artifact: [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs), [custom_strategies.md](file:///c:/Users/lucas/Code/CDG/doc/custom_strategies.md).
+- Verification: `cargo test` - 49 tests passed. Verified CLI and pipeline execution against custom JSON configs.
+- Pending: None.
 
 ### Session 31: Resolve Flat Backtest Curves & Align Plots
 
@@ -25,23 +44,3 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 - Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs).
 - Verification: `cargo test` - 46 tests passed. Pipeline execution verified to trigger active trades (e.g. 4 trades on MACD) and compound Treasury yield over exactly the 30-day window (returning 0.37%).
 - Pending: None.
-
-### Session 30: Organize Backtest Output Folders
-
-- Date: 2026-07-04
-- Agent: Antigravity
-- Goal: Store all backtesting output files (CSV/JSON reports and PNG charts) in a dedicated `backtests/` folder inside the `run_xxxx/` directory.
-- Constraints: None.
-- Done:
-  - Created `backtest_dir` inside the pipeline run directory in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L843-L847).
-  - Updated paths for all individual and portfolio backtest PNG charts to write to `backtests/` subdirectory in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L872-L1021).
-  - Redirected output files `backtest_report.csv` and `backtest_report.json` to compile into `backtests/` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L1040-L1078).
-- Blocked: None.
-- Risk: None.
-- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
-- Verification: `cargo test` - 46 tests passed. Pipeline execution verified to export all backtesting assets to `cdg_files/run_xxxx/backtests/`.
-- Pending: None.
-
-### Session 29: Cache B&H and Add Treasury Benchmark
-
-
