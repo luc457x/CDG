@@ -1171,11 +1171,11 @@ mod tests {
         assert_eq!(bh_rsi.len(), 4);
 
         // MACD strategy
-        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_macd, _equity_macd, _bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_macd.strategy, "macd");
 
         // Bollinger strategy
-        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_bb, _equity_bb, _bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_bb.strategy, "bollinger");
     }
 
@@ -1222,11 +1222,11 @@ mod tests {
         let weights = vec![0.6, 0.4];
 
         // Weekly rebalancing
-        let (metrics_w, equity_w, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "weekly").unwrap();
+        let (_metrics_w, equity_w, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "weekly").unwrap();
         // Monthly rebalancing
-        let (metrics_m, equity_m, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "monthly").unwrap();
+        let (_metrics_m, equity_m, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "monthly").unwrap();
         // Daily rebalancing
-        let (metrics_d, equity_d, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "daily").unwrap();
+        let (_metrics_d, equity_d, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "daily").unwrap();
 
         assert_eq!(equity_w.len(), 5);
         assert_eq!(equity_m.len(), 5);
