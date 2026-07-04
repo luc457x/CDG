@@ -164,7 +164,7 @@ fn test_backtest_with_risk_free_rate() {
     ])
     .unwrap();
 
-    let (res_rf, _, _) = cdg::backtest::run_backtest_for_asset(&df, "asset", "rsi", 0.0, 0.0, 252.0, 30, &mut None).unwrap();
+    let (res_rf, _, _) = cdg::backtest::run_backtest_for_asset(&df, "asset", "rsi", None, 0.0, 0.0, 252.0, 30, &mut None).unwrap();
 
     let df_no_rf = DataFrame::new(vec![
         Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"]),
@@ -173,7 +173,7 @@ fn test_backtest_with_risk_free_rate() {
     ])
     .unwrap();
 
-    let (res_no_rf, _, _) = cdg::backtest::run_backtest_for_asset(&df_no_rf, "asset", "rsi", 0.0, 0.0, 252.0, 30, &mut None).unwrap();
+    let (res_no_rf, _, _) = cdg::backtest::run_backtest_for_asset(&df_no_rf, "asset", "rsi", None, 0.0, 0.0, 252.0, 30, &mut None).unwrap();
 
     // The Sharpe ratio with 5% risk free rate should be lower than with 0% risk free rate
     assert!(res_rf.strategy_sharpe < res_no_rf.strategy_sharpe);

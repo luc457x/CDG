@@ -101,7 +101,7 @@ pub enum Commands {
         days: u32,
 
         /// Strategy to backtest: 'rsi', 'macd', 'bollinger', or 'all' (default: rsi)
-        #[arg(short, long, default_value = "rsi")]
+        #[arg(short, long, default_value = "rsi", env = "CDG_BACKTEST_STRATEGY")]
         strategy: String,
 
         /// Transaction fee as decimal (default: 0.001)
@@ -850,11 +850,21 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
         let mut backtest_metrics = Vec::new();
-        let strats = if strategy.to_lowercase() == "all" {
-            vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()]
+        let mut custom_configs = Vec::new();
+        let mut strats = Vec::new();
+        if strategy.ends_with(".json") {
+            let configs = cdg::backtest::load_custom_strategies(&strategy)?;
+            for cfg in configs {
+                strats.push(cfg.name.clone());
+                custom_configs.push(Some(cfg));
+            }
+        } else if strategy.to_lowercase() == "all" {
+            strats = vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()];
+            custom_configs = vec![None, None, None];
         } else {
-            vec![strategy.to_lowercase()]
-        };
+            strats = vec![strategy.to_lowercase()];
+            custom_configs = vec![None];
+        }
 
         let backtest_dir = format!("{}/backtests", run_dir);
         cdg::utils::validate_safe_path(&backtest_dir)?;
@@ -864,12 +874,13 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
         // 1. Backtest individual assets
         for col in &currency_cols {
-            for strat in &strats {
+            for (strat, custom_cfg) in strats.iter().zip(custom_configs.iter()) {
                 let cache_entry = asset_bh_caches.entry(col.to_string()).or_insert(None);
                 match cdg::backtest::run_backtest_for_asset(
                     &final_df,
                     col,
                     strat,
+                    custom_cfg.as_ref(),
                     fee,
                     slippage,
                     final_ann_factor,
@@ -1216,11 +1227,21 @@ async fn run_standalone_backtest(
 
     // 6. Run backtests
     let mut backtest_metrics = Vec::new();
-    let strats = if strategy.to_lowercase() == "all" {
-        vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()]
+    let mut custom_configs = Vec::new();
+    let mut strats = Vec::new();
+    if strategy.ends_with(".json") {
+        let configs = cdg::backtest::load_custom_strategies(strategy)?;
+        for cfg in configs {
+            strats.push(cfg.name.clone());
+            custom_configs.push(Some(cfg));
+        }
+    } else if strategy.to_lowercase() == "all" {
+        strats = vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()];
+        custom_configs = vec![None, None, None];
     } else {
-        vec![strategy.to_lowercase()]
-    };
+        strats = vec![strategy.to_lowercase()];
+        custom_configs = vec![None];
+    }
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let run_dir = format!("{}/backtest_run_{}", output_dir, timestamp);
@@ -1229,9 +1250,9 @@ async fn run_standalone_backtest(
 
     for (df, col) in coin_dfs.iter().zip(target_names.iter()) {
         let mut bh_cache = None;
-        for strat in &strats {
+        for (strat, custom_cfg) in strats.iter().zip(custom_configs.iter()) {
             // Standalone run uses default annualization 365.0
-            match cdg::backtest::run_backtest_for_asset(df, col, strat, fee, slippage, 365.0, days as usize, &mut bh_cache) {
+            match cdg::backtest::run_backtest_for_asset(df, col, strat, custom_cfg.as_ref(), fee, slippage, 365.0, days as usize, &mut bh_cache) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 

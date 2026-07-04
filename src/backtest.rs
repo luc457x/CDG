@@ -32,6 +32,223 @@ pub struct BacktestReport {
     pub metrics: HashMap<String, BacktestMetrics>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ColumnRef {
+    pub column: String,
+    #[serde(default)]
+    pub shift: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum ValueSource {
+    Number(f64),
+    Column(ColumnRef),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum LogicalOperator {
+    #[serde(rename = "AND", alias = "and")]
+    And,
+    #[serde(rename = "OR", alias = "or")]
+    Or,
+    #[serde(rename = "NOT", alias = "not")]
+    Not,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ComparisonOperator {
+    #[serde(rename = "<")]
+    LessThan,
+    #[serde(rename = ">")]
+    GreaterThan,
+    #[serde(rename = "==")]
+    Equal,
+    #[serde(rename = "<=")]
+    LessThanOrEqual,
+    #[serde(rename = ">=")]
+    GreaterThanOrEqual,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum Condition {
+    Logical {
+        operator: LogicalOperator,
+        rules: Vec<Condition>,
+    },
+    Comparison {
+        column: String,
+        #[serde(default)]
+        shift: usize,
+        operator: ComparisonOperator,
+        value: ValueSource,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type")]
+pub enum ConfidenceConfig {
+    #[serde(rename = "Constant")]
+    Constant { value: f64 },
+    #[serde(rename = "LinearScale")]
+    LinearScale {
+        column: String,
+        #[serde(default)]
+        shift: usize,
+        min: f64,
+        max: f64,
+        #[serde(default = "default_multiplier")]
+        multiplier: f64,
+    },
+}
+
+fn default_multiplier() -> f64 {
+    1.0
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CustomStrategyConfig {
+    pub name: String,
+    pub buy_condition: Condition,
+    pub sell_condition: Condition,
+    pub neutral_condition: Option<Condition>,
+    #[serde(default = "default_confidence_config")]
+    pub confidence: ConfidenceConfig,
+}
+
+fn default_confidence_config() -> ConfidenceConfig {
+    ConfidenceConfig::Constant { value: 1.0 }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum CustomStrategyInput {
+    Single(CustomStrategyConfig),
+    MultipleList(Vec<CustomStrategyConfig>),
+    MultipleMap(HashMap<String, CustomStrategyConfig>),
+}
+
+pub fn load_custom_strategies(path: &str) -> Result<Vec<CustomStrategyConfig>> {
+    let content = std::fs::read_to_string(path)?;
+    let input: CustomStrategyInput = serde_json::from_str(&content)?;
+    let configs = match input {
+        CustomStrategyInput::Single(cfg) => vec![cfg],
+        CustomStrategyInput::MultipleList(list) => list,
+        CustomStrategyInput::MultipleMap(map) => {
+            let mut list = Vec::new();
+            for (key, mut cfg) in map {
+                if cfg.name.is_empty() {
+                    cfg.name = key;
+                }
+                list.push(cfg);
+            }
+            list
+        }
+    };
+    Ok(configs)
+}
+
+fn get_df_value(df: &DataFrame, name: &str, idx: usize, shift: usize, coin: &str) -> Result<f64> {
+    if idx < shift {
+        return Err(anyhow!("Index {} out of bounds for shift {} at start of backtest", idx, shift));
+    }
+    let target_idx = idx - shift;
+    let col = if df.column(name).is_ok() {
+        df.column(name)?
+    } else {
+        let prefixed = format!("{}_{}", coin, name);
+        df.column(&prefixed)?
+    };
+    let val = col.f64()?.get(target_idx).ok_or_else(|| {
+        anyhow!(
+            "Null or missing value in column {} (resolved index: {})",
+            col.name(),
+            target_idx
+        )
+    })?;
+    Ok(val)
+}
+
+fn evaluate_condition(
+    cond: &Condition,
+    idx: usize,
+    df: &DataFrame,
+    coin: &str,
+) -> Result<bool> {
+    match cond {
+        Condition::Logical { operator, rules } => match operator {
+            LogicalOperator::And => {
+                for r in rules {
+                    if !evaluate_condition(r, idx, df, coin)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(!rules.is_empty())
+            }
+            LogicalOperator::Or => {
+                for r in rules {
+                    if evaluate_condition(r, idx, df, coin)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            LogicalOperator::Not => {
+                if rules.len() != 1 {
+                    return Err(anyhow!("NOT operator requires exactly one rule"));
+                }
+                let res = evaluate_condition(&rules[0], idx, df, coin)?;
+                Ok(!res)
+            }
+        },
+        Condition::Comparison {
+            column,
+            shift,
+            operator,
+            value,
+        } => {
+            let col_val = get_df_value(df, column, idx, *shift, coin)?;
+            let target_val = match value {
+                ValueSource::Number(n) => *n,
+                ValueSource::Column(col_ref) => {
+                    get_df_value(df, &col_ref.column, idx, col_ref.shift, coin)?
+                }
+            };
+            let match_res = match operator {
+                ComparisonOperator::LessThan => col_val < target_val,
+                ComparisonOperator::GreaterThan => col_val > target_val,
+                ComparisonOperator::Equal => (col_val - target_val).abs() < 1e-9,
+                ComparisonOperator::LessThanOrEqual => col_val <= target_val,
+                ComparisonOperator::GreaterThanOrEqual => col_val >= target_val,
+            };
+            Ok(match_res)
+        }
+    }
+}
+
+fn evaluate_confidence(
+    config: &ConfidenceConfig,
+    idx: usize,
+    df: &DataFrame,
+    coin: &str,
+) -> Result<f64> {
+    match config {
+        ConfidenceConfig::Constant { value } => Ok(*value),
+        ConfidenceConfig::LinearScale {
+            column,
+            shift,
+            min,
+            max,
+            multiplier,
+        } => {
+            let val = get_df_value(df, column, idx, *shift, coin)?;
+            let scaled = (val.abs() * multiplier).clamp(*min, *max);
+            Ok(scaled)
+        }
+    }
+}
+
 pub fn calculate_mda(actuals: &[f64], predicted: &[f64]) -> f64 {
     if actuals.is_empty() || predicted.is_empty() || actuals.len() != predicted.len() {
         return 0.0;
@@ -198,16 +415,84 @@ pub struct BhCache {
     pub equity: Vec<f64>,
 }
 
+fn collect_referenced_columns(cond: &Condition, cols: &mut std::collections::HashSet<String>) {
+    match cond {
+        Condition::Logical { rules, .. } => {
+            for r in rules {
+                collect_referenced_columns(r, cols);
+            }
+        }
+        Condition::Comparison { column, value, .. } => {
+            cols.insert(column.clone());
+            if let ValueSource::Column(col_ref) = value {
+                cols.insert(col_ref.column.clone());
+            }
+        }
+    }
+}
+
+fn collect_strategy_columns(
+    config: &CustomStrategyConfig,
+) -> std::collections::HashSet<String> {
+    let mut cols = std::collections::HashSet::new();
+    collect_referenced_columns(&config.buy_condition, &mut cols);
+    collect_referenced_columns(&config.sell_condition, &mut cols);
+    if let Some(ref neutral) = config.neutral_condition {
+        collect_referenced_columns(neutral, &mut cols);
+    }
+    match &config.confidence {
+        ConfidenceConfig::Constant { .. } => {}
+        ConfidenceConfig::LinearScale { column, .. } => {
+            cols.insert(column.clone());
+        }
+    }
+    cols
+}
+
+fn get_max_shift(cond: &Condition) -> usize {
+    match cond {
+        Condition::Logical { rules, .. } => {
+            rules.iter().map(get_max_shift).max().unwrap_or(0)
+        }
+        Condition::Comparison { shift, value, .. } => {
+            let val_shift = match value {
+                ValueSource::Number(_) => 0,
+                ValueSource::Column(col_ref) => col_ref.shift,
+            };
+            (*shift).max(val_shift)
+        }
+    }
+}
+
+fn get_strategy_max_shift(config: &CustomStrategyConfig) -> usize {
+    let mut max_shift = get_max_shift(&config.buy_condition)
+        .max(get_max_shift(&config.sell_condition));
+    if let Some(ref neutral) = config.neutral_condition {
+        max_shift = max_shift.max(get_max_shift(neutral));
+    }
+    if let ConfidenceConfig::LinearScale { shift, .. } = &config.confidence {
+        max_shift = max_shift.max(*shift);
+    }
+    max_shift
+}
+
 pub fn run_backtest_for_asset(
     df: &DataFrame,
     coin: &str,
     strategy_name: &str,
+    custom_strat: Option<&CustomStrategyConfig>,
     fee: f64,
     slippage: f64,
     annualization_factor: f64,
     days_to_backtest: usize,
     bh_cache: &mut Option<BhCache>,
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
+    let display_strat_name = if let Some(ref config) = custom_strat {
+        config.name.clone()
+    } else {
+        strategy_name.to_string()
+    };
+
     let close_col = if df.column(&format!("{}_close", coin)).is_ok() {
         format!("{}_close", coin)
     } else {
@@ -251,23 +536,52 @@ pub fn run_backtest_for_asset(
         .ok()
         .map(|c| c.f64().unwrap().into_iter().collect());
 
-    match strategy_name.to_lowercase().as_str() {
-        "rsi" | "macd" | "bollinger" => {}
-        _ => return Err(anyhow!("Unknown strategy: {}", strategy_name)),
+    if custom_strat.is_none() {
+        match strategy_name.to_lowercase().as_str() {
+            "rsi" | "macd" | "bollinger" => {}
+            _ => return Err(anyhow!("Unknown strategy: {}", strategy_name)),
+        }
     }
+
+    let required_cols = if let Some(ref config) = custom_strat {
+        collect_strategy_columns(config)
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let max_shift = if let Some(ref config) = custom_strat {
+        get_strategy_max_shift(config)
+    } else {
+        0
+    };
 
     let mut first_valid_idx = 0;
     for i in 0..n {
+        if i < max_shift {
+            continue;
+        }
         let price_ok = prices[i].is_some();
-        let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-        let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-            && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-            && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-        let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-            && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-            && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+        let indicators_ok = if let Some(ref _config) = custom_strat {
+            let mut all_ok = true;
+            for col in &required_cols {
+                if get_df_value(df, col, i, 0, coin).is_err() {
+                    all_ok = false;
+                    break;
+                }
+            }
+            all_ok
+        } else {
+            let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+            let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+            let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+            rsi_ok && macd_ok && bb_ok
+        };
 
-        if price_ok && rsi_ok && macd_ok && bb_ok {
+        if price_ok && indicators_ok {
             first_valid_idx = i;
             break;
         }
@@ -319,54 +633,74 @@ pub fn run_backtest_for_asset(
         let mut sig_t = current_position;
         let mut conf_t = 1.0;
 
-        match strategy_name.to_lowercase().as_str() {
-            "rsi" => {
-                if let Some(ref rsi_vec) = rsi {
-                    if let Some(rsi_val) = rsi_vec[prev_t] {
-                        if rsi_val < 30.0 {
-                            sig_t = 2; 
-                            conf_t = ((30.0 - rsi_val) / 15.0).clamp(0.1, 1.0);
-                        } else if rsi_val > 70.0 {
-                            sig_t = 0; 
-                            conf_t = ((rsi_val - 70.0) / 15.0).clamp(0.1, 1.0);
+        if let Some(ref config) = custom_strat {
+            let buy_triggered = evaluate_condition(&config.buy_condition, prev_t, df, coin)?;
+            let sell_triggered = evaluate_condition(&config.sell_condition, prev_t, df, coin)?;
+            let neutral_triggered = if let Some(ref neutral) = config.neutral_condition {
+                evaluate_condition(neutral, prev_t, df, coin)?
+            } else {
+                false
+            };
+
+            if buy_triggered {
+                sig_t = 2;
+            } else if sell_triggered {
+                sig_t = 0;
+            } else if neutral_triggered {
+                sig_t = 1;
+            }
+
+            conf_t = evaluate_confidence(&config.confidence, prev_t, df, coin)?;
+        } else {
+            match strategy_name.to_lowercase().as_str() {
+                "rsi" => {
+                    if let Some(ref rsi_vec) = rsi {
+                        if let Some(rsi_val) = rsi_vec[prev_t] {
+                            if rsi_val < 30.0 {
+                                sig_t = 2; 
+                                conf_t = ((30.0 - rsi_val) / 15.0).clamp(0.1, 1.0);
+                            } else if rsi_val > 70.0 {
+                                sig_t = 0; 
+                                conf_t = ((rsi_val - 70.0) / 15.0).clamp(0.1, 1.0);
+                            }
                         }
                     }
                 }
-            }
-            "bollinger" => {
-                if let (Some(ref upper_vec), Some(ref lower_vec), Some(ref mid_vec)) =
-                    (&bb_upper, &bb_lower, &bb_mid)
-                {
-                    if let (Some(up), Some(lo), Some(mid)) =
-                        (upper_vec[prev_t], lower_vec[prev_t], mid_vec[prev_t])
+                "bollinger" => {
+                    if let (Some(ref upper_vec), Some(ref lower_vec), Some(ref mid_vec)) =
+                        (&bb_upper, &bb_lower, &bb_mid)
                     {
-                        let prev_price = price_prev;
-                        let std = ((up - mid) / 2.0).max(1e-6);
-                        if prev_price < lo {
-                            sig_t = 2; 
-                            conf_t = ((lo - prev_price) / std).clamp(0.1, 1.0);
-                        } else if prev_price > up {
-                            sig_t = 0; 
-                            conf_t = ((prev_price - up) / std).clamp(0.1, 1.0);
+                        if let (Some(up), Some(lo), Some(mid)) =
+                            (upper_vec[prev_t], lower_vec[prev_t], mid_vec[prev_t])
+                        {
+                            let prev_price = price_prev;
+                            let std = ((up - mid) / 2.0).max(1e-6);
+                            if prev_price < lo {
+                                sig_t = 2; 
+                                conf_t = ((lo - prev_price) / std).clamp(0.1, 1.0);
+                            } else if prev_price > up {
+                                sig_t = 0; 
+                                conf_t = ((prev_price - up) / std).clamp(0.1, 1.0);
+                            }
                         }
                     }
                 }
-            }
-            "macd" => {
-                if let (Some(ref line_vec), Some(ref sig_vec)) = (&macd_line, &macd_signal) {
-                    if let (Some(line), Some(sig)) = (line_vec[prev_t], sig_vec[prev_t]) {
-                        if line > sig {
-                            sig_t = 2; 
-                        } else if line < sig {
-                            sig_t = 0; 
+                "macd" => {
+                    if let (Some(ref line_vec), Some(ref sig_vec)) = (&macd_line, &macd_signal) {
+                        if let (Some(line), Some(sig)) = (line_vec[prev_t], sig_vec[prev_t]) {
+                            if line > sig {
+                                sig_t = 2; 
+                            } else if line < sig {
+                                sig_t = 0; 
+                            }
+                            let std_hist = calculate_rolling_std(&macd_hist_raw, prev_t, 20);
+                            let hist_val = macd_hist_raw[prev_t];
+                            conf_t = (hist_val.abs() / std_hist).clamp(0.1, 1.0);
                         }
-                        let std_hist = calculate_rolling_std(&macd_hist_raw, prev_t, 20);
-                        let hist_val = macd_hist_raw[prev_t];
-                        conf_t = (hist_val.abs() / std_hist).clamp(0.1, 1.0);
                     }
                 }
+                _ => {}
             }
-            _ => {}
         }
 
         signals[t] = sig_t;
@@ -463,7 +797,7 @@ pub fn run_backtest_for_asset(
     let metrics = BacktestMetrics {
         coin: coin_base,
         currency: currency_base,
-        strategy: strategy_name.to_string(),
+        strategy: display_strat_name,
         strategy_return: final_strat_return,
         buy_and_hold_return: final_bh_return,
         strategy_sharpe: strat_sharpe,
@@ -765,18 +1099,18 @@ mod tests {
             Series::new("bitcoin_usd_sma_20", vec![100.0, 100.0, 100.0, 100.0]),
         ]).unwrap();
 
-        let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+                let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_rsi.coin, "bitcoin".to_string());
         assert_eq!(metrics_rsi.strategy, "rsi".to_string());
         assert_eq!(equity_rsi.len(), 4);
         assert_eq!(bh_rsi.len(), 4);
 
         // MACD strategy
-        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_macd.strategy, "macd");
 
         // Bollinger strategy
-        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
         assert_eq!(metrics_bb.strategy, "bollinger");
     }
 
@@ -801,5 +1135,178 @@ mod tests {
         assert_eq!(bh_equity.len(), 4);
         assert!(metrics.strategy_return != 0.0);
         assert!(metrics.buy_and_hold_return != 0.0);
+    }
+
+    #[test]
+    fn test_custom_strategy() {
+        use std::io::Write;
+
+        let strategy_json = r#"{
+            "name": "custom_rsi_test",
+            "buy_condition": {
+                "column": "bitcoin_usd_rsi_14",
+                "operator": "<",
+                "value": 30.0
+            },
+            "sell_condition": {
+                "column": "bitcoin_usd_rsi_14",
+                "operator": ">",
+                "value": 75.0
+            },
+            "neutral_condition": null,
+            "confidence": {
+                "type": "Constant",
+                "value": 1.0
+            }
+        }"#;
+
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_custom_rsi_test.json");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        file.write_all(strategy_json.as_bytes()).unwrap();
+
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
+            Series::new("bitcoin_usd_rsi_14", vec![25.0, 28.0, 76.0, 80.0]),
+        ]).unwrap();
+
+        let configs = load_custom_strategies(file_path.to_str().unwrap()).unwrap();
+        let (metrics, equity, bh) = run_backtest_for_asset(
+            &df,
+            "bitcoin_usd",
+            "custom_rsi_test",
+            Some(&configs[0]),
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        ).unwrap();
+
+        assert_eq!(metrics.coin, "bitcoin");
+        assert_eq!(metrics.strategy, "custom_rsi_test");
+        assert_eq!(equity.len(), 4);
+        assert_eq!(bh.len(), 4);
+
+        let _ = std::fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn test_custom_strategy_with_shift() {
+        use std::io::Write;
+
+        let strategy_json = r#"{
+            "name": "custom_shift_test",
+            "buy_condition": {
+                "column": "rsi_14",
+                "operator": "<",
+                "value": {
+                    "column": "rsi_14",
+                    "shift": 1
+                }
+            },
+            "sell_condition": {
+                "column": "rsi_14",
+                "operator": ">",
+                "value": 75.0
+            },
+            "neutral_condition": null,
+            "confidence": {
+                "type": "Constant",
+                "value": 1.0
+            }
+        }"#;
+
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_custom_shift_test.json");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        file.write_all(strategy_json.as_bytes()).unwrap();
+
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
+            Series::new("bitcoin_usd_rsi_14", vec![50.0, 45.0, 40.0, 80.0]),
+        ]).unwrap();
+
+        let configs = load_custom_strategies(file_path.to_str().unwrap()).unwrap();
+        let (metrics, _, _) = run_backtest_for_asset(
+            &df,
+            "bitcoin_usd",
+            "custom_shift_test",
+            Some(&configs[0]),
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        ).unwrap();
+
+        assert_eq!(metrics.strategy, "custom_shift_test");
+
+        let _ = std::fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn test_load_custom_strategies_multi() {
+        use std::io::Write;
+
+        // 1. Test Multiple List JSON
+        let strategy_list_json = r#"[
+            {
+                "name": "rsi_list_1",
+                "buy_condition": { "column": "rsi_14", "operator": "<", "value": 30.0 },
+                "sell_condition": { "column": "rsi_14", "operator": ">", "value": 70.0 },
+                "neutral_condition": null,
+                "confidence": { "type": "Constant", "value": 1.0 }
+            },
+            {
+                "name": "rsi_list_2",
+                "buy_condition": { "column": "rsi_14", "operator": "<", "value": 35.0 },
+                "sell_condition": { "column": "rsi_14", "operator": ">", "value": 65.0 },
+                "neutral_condition": null,
+                "confidence": { "type": "Constant", "value": 1.0 }
+            }
+        ]"#;
+
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_multi_list.json");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        file.write_all(strategy_list_json.as_bytes()).unwrap();
+
+        let configs = load_custom_strategies(file_path.to_str().unwrap()).unwrap();
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].name, "rsi_list_1");
+        assert_eq!(configs[1].name, "rsi_list_2");
+        let _ = std::fs::remove_file(&file_path);
+
+        // 2. Test Multiple Map JSON
+        let strategy_map_json = r#"{
+            "rsi_map_1": {
+                "name": "",
+                "buy_condition": { "column": "rsi_14", "operator": "<", "value": 30.0 },
+                "sell_condition": { "column": "rsi_14", "operator": ">", "value": 70.0 },
+                "neutral_condition": null,
+                "confidence": { "type": "Constant", "value": 1.0 }
+            },
+            "rsi_map_2": {
+                "name": "explicit_name",
+                "buy_condition": { "column": "rsi_14", "operator": "<", "value": 35.0 },
+                "sell_condition": { "column": "rsi_14", "operator": ">", "value": 65.0 },
+                "neutral_condition": null,
+                "confidence": { "type": "Constant", "value": 1.0 }
+            }
+        }"#;
+
+        let file_path = temp_dir.join("test_multi_map.json");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        file.write_all(strategy_map_json.as_bytes()).unwrap();
+
+        let mut configs = load_custom_strategies(file_path.to_str().unwrap()).unwrap();
+        configs.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].name, "explicit_name");
+        assert_eq!(configs[1].name, "rsi_map_1");
+        let _ = std::fs::remove_file(&file_path);
     }
 }
