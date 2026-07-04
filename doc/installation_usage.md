@@ -52,7 +52,7 @@ This mode clears the terminal and presents a menu driven by the keyboard:
 - **Get Trending Coins**: Retrieves and prints current trending cryptocurrencies from CoinGecko.
 - **Get Raw OHLCV Data**: Queries, displays, and exports raw historical candlestick data.
 - **Check Coin ID Validity**: Validates if a coin exists on CoinGecko, and returns suggestions if not.
-- **Configure Cache TTL**: Dynamically updates the cache expiration time for the session.
+- **Settings**: Sub-menu to configure cache TTL dynamically (under **Configure Cache TTL**).
 - **Exit**: Close the application.
 
 > [!NOTE]

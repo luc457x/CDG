@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS api_cache (
   ```
 - **Read Operation (`get`)**: Hashed request URLs serve as primary keys. If a record matches the URL key:
   - If `current_timestamp - cached_at_timestamp < TTL`, it returns the cached response body string.
-  - The default TTL is **300 seconds** (5 minutes). This can be customized using the `--cache-ttl` global command-line option, or configured dynamically in the interactive menu under the **"Configure Cache TTL"** action.
+  - The default TTL is **300 seconds** (5 minutes). This can be customized using the `--cache-ttl` global command-line option, or configured dynamically in the interactive menu under the **"Settings"** -> **"Configure Cache TTL"** action.
   - Otherwise, it deletes the expired cache row and returns `None` (cache miss).
 - **Write Operation (`insert`)**: Saves response bodies alongside the current UNIX timestamp, automatically overwriting old keys (`INSERT OR REPLACE`).
 

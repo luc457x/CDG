@@ -63,6 +63,7 @@ Port the python CoinGecko and Yahoo Finance data collector to a robust, modular,
 - **FR20 (Configurable Output Directory)**: The application must support a configurable base output directory `--output-dir` (default: `cdg_files`) and environment variable `CDG_OUTPUT_DIR`. All run and candlestick outputs, as well as the default SQLite database path and default output prefix, must resolve dynamically relative to this output directory.
 - **FR21 (Configurable Raw Format)**: The application must support a configurable raw format option `--raw-format` (default: `json`) and environment variable `CDG_RAW_FORMAT`, supporting `json` and `csv`. All raw OHLCV files saved during pipeline runs or standalone OHLCV retrieval must be generated in this format only.
 - **FR22 (Portfolio Backtesting)**: When strategy backtesting is enabled and the portfolio has 2 or more assets, the pipeline must also backtest the optimized `Max Sharpe` and `Min Volatility` portfolios using target weights. Rebalancing return must be simulated and compared against a non-rebalanced Buy & Hold baseline.
+- **FR23 (Interactive Settings Option)**: Replace the "Configure Cache TTL" main menu option with a "Settings" option. Selecting "Settings" prints a warning that interactive selections are not saved to disk, and displays a settings sub-menu containing "Configure Cache TTL" and "Back".
 
 
 ## 5. Business Rules (BR)

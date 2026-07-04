@@ -2,12 +2,31 @@
 
 ## Status
 
-- State: CLI modularized, Polars hstack optimized, and portfolio rebalancing fees simulated.
-- Last: Refactored analysis.rs to use hstack, split main.rs into pipeline.rs/ui.rs, and verified tests.
+- State: Settings sub-menu added to interactive CLI mode.
+- Last: Replaced Configure Cache TTL with Settings menu and moved warning print inside it.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 34: Add Settings Submenu to Interactive UI
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Replace the "Configure Cache TTL" main menu option with a "Settings" sub-menu in interactive mode, displaying a warning message when opened.
+- Constraints: None.
+- Done:
+  - Replaced the "Configure Cache TTL" option with a "Settings" option in the main interactive menu of [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs#L46-L55).
+  - Implemented the "Settings" sub-menu in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs#L364-L403) that displays a warning print and prompts with "Configure Cache TTL" and "Back" settings choices.
+  - Removed the env file warning print from the "Run Portfolio Pipeline" menu selection in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs#L77) and moved it to the "Settings" menu option.
+  - Adjusted the outer menu loop post-match check in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs#L405-L407) to skip `wait_for_back()` if the choice was `"Settings"`.
+  - Added functional requirement `FR23` to [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md#L66-L67).
+  - Updated documentation files [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md#L55) and [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md#L67) to reference the new settings submenu path.
+- Blocked: None.
+- Risk: None.
+- Artifact: [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs), [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md), [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md), [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md).
+- Verification: Compiled successfully using `cargo check`.
+- Pending: None.
 
 ### Session 33: Modularization and Polars Optimization
 
@@ -25,44 +44,9 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
   - Added interactive prompt selections for rebalancing frequency.
   - Created ADR 001 to document choices on native Polars expressions for indicators.
   - Created [env.example](file:///c:/Users/lucas/Code/CDG/.env.example) template file.
-  - Added warning in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) notifying user to edit `.env` for persistent parameters.
+  - Added warning in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) notifying user to edit `.env` for permanent defaults.
 - Blocked: None.
 - Risk: None.
 - Artifacts: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs), [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs), [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs), [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [Cargo.toml](file:///c:/Users/lucas/Code/CDG/Cargo.toml), [env.example](file:///c:/Users/lucas/Code/CDG/.env.example).
 - Verification: `cargo test` - 50 tests passed.
-
-### Session 32: Custom Backtesting Strategy JSON Support
-
-- Date: 2026-07-04
-- Agent: Antigravity
-- Goal: Implement custom strategy definitions parsed from JSON configs (supporting single, list, and map formats) in standalone backtest and full pipeline commands, using mathematical signs for comparisons and without new dependencies.
-- Constraints: None.
-- Done:
-  - Added recursive `Condition` logic trees and `ConfidenceConfig` structs to [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs).
-  - Modified `run_backtest_for_asset` signature to accept `custom_strat` directly and resolve indicators with coin prefixes.
-  - Implemented `load_custom_strategies` to support single strategy, list of strategies, and map of strategies.
-  - Simplified comparison operators to use mathematical comparison signs (`<`, `>`, `==`, `<=`, `>=`) only.
-  - Updated all unit tests and integration tests.
-  - Added dedicated guide [custom_strategies.md](file:///c:/Users/lucas/Code/CDG/doc/custom_strategies.md) and linked it in all modular documents.
-- Blocked: None.
-- Risk: None.
-- Artifact: [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs), [custom_strategies.md](file:///c:/Users/lucas/Code/CDG/doc/custom_strategies.md).
-- Verification: `cargo test` - 49 tests passed. Verified CLI and pipeline execution against custom JSON configs.
-- Pending: None.
-
-### Session 31: Resolve Flat Backtest Curves & Align Plots
-
-- Date: 2026-07-04
-- Agent: Antigravity
-- Goal: Fix flat curves in backtest plots caused by missing warm-up data for indicators, and slice returned curves to show only active periods.
-- Constraints: None.
-- Done:
-  - Updated historical fetching timestamp range in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L475-L480) to query extra days for indicator warm-up.
-  - Modified [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L484-L486) signature to accept `days_to_backtest` and return sliced active equity curves.
-  - Sliced dates arrays inside [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L880-L1040) before plotting to fit the active backtesting range.
-  - Aligned start index for the US 10-Year Treasury compounded return calculation in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L946-L950) to match the backtest window duration.
-- Blocked: None.
-- Risk: None.
-- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs).
-- Verification: `cargo test` - 46 tests passed. Pipeline execution verified to trigger active trades (e.g. 4 trades on MACD) and compound Treasury yield over exactly the 30-day window (returning 0.37%).
 - Pending: None.
