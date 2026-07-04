@@ -2,12 +2,28 @@
 
 ## Status
 
-- State: Custom JSON strategy backtesting engine integrated and documented.
-- Last: Removed word-based operators and enforced mathematical comparison signs globally.
+- State: CLI modularized, Polars hstack optimized, and portfolio rebalancing fees simulated.
+- Last: Refactored analysis.rs to use hstack, split main.rs into pipeline.rs/ui.rs, and verified tests.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 33: Modularization and Polars Optimization
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Clean up CLI monolith, optimize DataFrame column insertions, and simulate portfolio rebalancing transaction costs.
+- Constraints: None.
+- Done:
+  - Created [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs) and [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) to modularize CLI logic from [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
+  - Registered new modules in [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs) and cleaned up [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
+  - Optimized [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs) by batch-inserting calculated indicators using `hstack` instead of iterating `.insert_column` calls.
+  - Added transaction fee and slippage math to portfolio daily rebalancing in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs) and [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs).
+- Blocked: None.
+- Risk: None.
+- Artifacts: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs), [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs), [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs), [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [Cargo.toml](file:///c:/Users/lucas/Code/CDG/Cargo.toml).
+- Verification: `cargo test` - 49 tests passed.
 
 ### Session 32: Custom Backtesting Strategy JSON Support
 
