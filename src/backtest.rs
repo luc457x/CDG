@@ -241,24 +241,23 @@ pub fn run_backtest_for_asset(
         .ok()
         .map(|c| c.f64().unwrap().into_iter().collect());
 
+    match strategy_name.to_lowercase().as_str() {
+        "rsi" | "macd" | "bollinger" => {}
+        _ => return Err(anyhow!("Unknown strategy: {}", strategy_name)),
+    }
+
     let mut start_idx = 0;
     for i in 0..n {
         let price_ok = prices[i].is_some();
-        let strat_ok = match strategy_name.to_lowercase().as_str() {
-            "rsi" => rsi.as_ref().and_then(|v| v[i]).is_some(),
-            "macd" => {
-                macd_line.as_ref().and_then(|v| v[i]).is_some()
-                    && macd_signal.as_ref().and_then(|v| v[i]).is_some()
-                    && macd_hist.as_ref().and_then(|v| v[i]).is_some()
-            }
-            "bollinger" => {
-                bb_upper.as_ref().and_then(|v| v[i]).is_some()
-                    && bb_lower.as_ref().and_then(|v| v[i]).is_some()
-                    && bb_mid.as_ref().and_then(|v| v[i]).is_some()
-            }
-            _ => return Err(anyhow!("Unknown strategy: {}", strategy_name)),
-        };
-        if price_ok && strat_ok {
+        let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+        let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+        let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+
+        if price_ok && rsi_ok && macd_ok && bb_ok {
             start_idx = i;
             break;
         }
@@ -542,9 +541,33 @@ pub fn backtest_portfolio(
                 break;
             }
             let asset = &assets[j];
+            
+            // Check RSI
             let rsi_col = format!("{}_rsi_14", asset);
             if let Ok(col) = df.column(&rsi_col) {
                 if col.f64()?.get(i).is_none() {
+                    all_valid = false;
+                    break;
+                }
+            }
+            
+            // Check MACD
+            let macd_line_col = format!("{}_macd_line", asset);
+            let macd_sig_col = format!("{}_macd_signal", asset);
+            let macd_hist_col = format!("{}_macd_histogram", asset);
+            if let (Ok(l), Ok(s), Ok(h)) = (df.column(&macd_line_col), df.column(&macd_sig_col), df.column(&macd_hist_col)) {
+                if l.f64()?.get(i).is_none() || s.f64()?.get(i).is_none() || h.f64()?.get(i).is_none() {
+                    all_valid = false;
+                    break;
+                }
+            }
+
+            // Check Bollinger Bands
+            let bb_upper_col = format!("{}_bollinger_upper", asset);
+            let bb_lower_col = format!("{}_bollinger_lower", asset);
+            let bb_mid_col = format!("{}_sma_20", asset);
+            if let (Ok(u), Ok(l), Ok(m)) = (df.column(&bb_upper_col), df.column(&bb_lower_col), df.column(&bb_mid_col)) {
+                if u.f64()?.get(i).is_none() || l.f64()?.get(i).is_none() || m.f64()?.get(i).is_none() {
                     all_valid = false;
                     break;
                 }

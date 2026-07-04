@@ -2,49 +2,29 @@
 
 ## Status
 
-- State: Dynamic risk-free rate (^TNX) integrated in portfolio optimization and backtesting Sharpe ratios.
-- Last: Fetched treasury yield, calculated risk-free rate adjustments, and verified Sharpe ratio calculations across 46 unit tests.
+- State: Backtest starting indices aligned across strategies and portfolios.
+- Last: Calculated start_idx based on the validity of all available indicators, ensuring matching time windows.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 
-### Session 27: Implement Dynamic Risk-Free Rate
+### Session 28: Align Backtest Starting Indices
 
 - Date: 2026-07-04
 - Agent: Antigravity
-- Goal: Integrate dynamic US 10-year Treasury Note yield (^TNX) as the risk-free rate for portfolio optimization and backtesting Sharpe ratio metrics.
+- Goal: Align starting indices across all strategy and portfolio backtests to ensure matching comparison windows (apples-to-apples comparison).
 - Constraints: None.
 - Done:
-  - Added `^TNX` to Yahoo Finance benchmark fetch in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L668-L685) and excluded it from index plotting.
-  - Implemented average annual risk-free rate parsing and Sharpe excess return optimizations in [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs#L143-L215).
-  - Refactored `calculate_sharpe` in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L79-L652) to accept `rf_rate` and compute excess-adjusted Sharpe ratios cleanly.
-  - Added unit test `test_backtest_with_risk_free_rate` in [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs#L156-L181).
+  - Updated `run_backtest_for_asset` in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L244-L264) to calculate `start_idx` based on the validity of all present indicators (RSI, MACD, Bollinger Bands) instead of only the target strategy's indicator.
+  - Updated `backtest_portfolio` in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L541-L569) to verify all present indicators for all portfolio assets when determining start index.
 - Blocked: None.
 - Risk: None.
-- Artifact: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [optimization.rs](file:///c:/Users/lucas/Code/CDG/src/optimization.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [pipeline_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/pipeline_tests.rs).
-- Verification: `cargo test` - 46 tests passed. Pipeline execution verified to fetch yield and output risk-free adjusted Sharpe ratios correctly.
+- Artifact: [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs).
+- Verification: `cargo test` - 46 tests passed. Pipeline execution verified to produce identical Buy & Hold returns for different strategy runs of the same asset.
 - Pending: None.
 
-### Session 26: Implement CLI Warning Polish
-
-- Date: 2026-07-03
-- Agent: Antigravity
-- Goal: Implement progress bar inline status updates for rate limits and transient connection issues instead of stdout/stderr warning spam.
-- Constraints: None.
-- Done:
-  - Added optional `pb: Option<ProgressBar>` to `CoinGeckoClient` in [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs#L18) and `YahooClient` in [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs#L8).
-  - Modified transient/rate-limit error handler branches in both clients to update progress bar messages if present.
-  - Linked active progress bars from [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L579) to clients during pipeline and benchmark historical data fetch runs.
-  - Added unit test `test_clients_with_progress_bar` in [api_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/api_tests.rs#L219-L238).
-  - Removed implemented items from [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md).
-- Blocked: None.
-- Risk: None.
-- Artifact: [coingecko.rs](file:///c:/Users/lucas/Code/CDG/src/api/coingecko.rs), [yahoo.rs](file:///c:/Users/lucas/Code/CDG/src/api/yahoo.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [api_tests.rs](file:///c:/Users/lucas/Code/CDG/tests/api_tests.rs), [BACKLOG.md](file:///c:/Users/lucas/Code/CDG/.agents/BACKLOG.md).
-- Verification: `cargo test` - 45 tests passed. Pipeline execution verified to update progress message.
-- Pending: None.
-
-### Session 25: Implement Code Review Findings
+### Session 27: Implement Dynamic Risk-Free Rate
 
 - Date: 2026-07-03
 - Agent: Antigravity
