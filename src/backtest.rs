@@ -983,20 +983,19 @@ pub fn backtest_portfolio(
         let equity_before_fees: f64 = new_values.iter().sum();
 
         // Check if calendar frequency triggers rebalancing
-        let mut should_rebalance = false;
         let date_str_prev = date_col.get(i - 1).unwrap_or("");
         let date_str_curr = date_col.get(i).unwrap_or("");
-        match rebalance_frequency.to_lowercase().as_str() {
+        let should_rebalance = match rebalance_frequency.to_lowercase().as_str() {
             "weekly" => {
                 if let (Ok(d_prev), Ok(d_curr)) = (
                     chrono::NaiveDate::parse_from_str(date_str_prev, "%Y-%m-%d"),
                     chrono::NaiveDate::parse_from_str(date_str_curr, "%Y-%m-%d"),
                 ) {
                     use chrono::Datelike;
-                    should_rebalance = d_prev.iso_week().week() != d_curr.iso_week().week()
-                        || d_prev.iso_week().year() != d_curr.iso_week().year();
+                    d_prev.iso_week().week() != d_curr.iso_week().week()
+                        || d_prev.iso_week().year() != d_curr.iso_week().year()
                 } else {
-                    should_rebalance = true;
+                    true
                 }
             }
             "monthly" => {
@@ -1005,17 +1004,17 @@ pub fn backtest_portfolio(
                     chrono::NaiveDate::parse_from_str(date_str_curr, "%Y-%m-%d"),
                 ) {
                     use chrono::Datelike;
-                    should_rebalance = d_prev.month() != d_curr.month()
-                        || d_prev.year() != d_curr.year();
+                    d_prev.month() != d_curr.month()
+                        || d_prev.year() != d_curr.year()
                 } else {
-                    should_rebalance = true;
+                    true
                 }
             }
             _ => {
                 // "daily" or anything else
-                should_rebalance = true;
+                true
             }
-        }
+        };
 
         if should_rebalance {
             // Compute rebalancing trade volumes and associated fees
