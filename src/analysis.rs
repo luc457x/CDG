@@ -723,65 +723,35 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
         full
     };
 
-    let mut out_df = df.clone();
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_simple_return", target_column),
-            scatter(&smp_returns_filtered),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_log_return", target_column),
-            scatter(&log_returns_filtered),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_sma_20", target_column), scatter(&sma20)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_ema_20", target_column), scatter(&ema20)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_rsi_14", target_column), scatter(&rsi14)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_macd_line", target_column), scatter(&macd_line)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_macd_signal", target_column),
-            scatter(&macd_signal),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_macd_histogram", target_column),
-            scatter(&macd_hist),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_bollinger_upper", target_column),
-            scatter(&bb_upper),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_bollinger_lower", target_column),
-            scatter(&bb_lower),
-        ),
-    )?;
+    let mut new_cols = Vec::new();
+    new_cols.push(Series::new(
+        &format!("{}_simple_return", target_column),
+        scatter(&smp_returns_filtered),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_log_return", target_column),
+        scatter(&log_returns_filtered),
+    ));
+    new_cols.push(Series::new(&format!("{}_sma_20", target_column), scatter(&sma20)));
+    new_cols.push(Series::new(&format!("{}_ema_20", target_column), scatter(&ema20)));
+    new_cols.push(Series::new(&format!("{}_rsi_14", target_column), scatter(&rsi14)));
+    new_cols.push(Series::new(&format!("{}_macd_line", target_column), scatter(&macd_line)));
+    new_cols.push(Series::new(
+        &format!("{}_macd_signal", target_column),
+        scatter(&macd_signal),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_macd_histogram", target_column),
+        scatter(&macd_hist),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_bollinger_upper", target_column),
+        scatter(&bb_upper),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_bollinger_lower", target_column),
+        scatter(&bb_lower),
+    ));
 
     // Advanced technical indicators (ATR, Stochastic, ADX, OBV) if columns exist
     let high_col = format!("{}_high", target_column);
@@ -805,22 +775,10 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
         let (stoch_k, stoch_d) = calculate_stochastic(&highs, &lows, &prices, 14);
         let adx = calculate_adx(&highs, &lows, &prices, 14);
 
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_atr_14", target_column), scatter(&atr)),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_stoch_k_14", target_column), scatter(&stoch_k)),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_stoch_d_3", target_column), scatter(&stoch_d)),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_adx_14", target_column), scatter(&adx)),
-        )?;
+        new_cols.push(Series::new(&format!("{}_atr_14", target_column), scatter(&atr)));
+        new_cols.push(Series::new(&format!("{}_stoch_k_14", target_column), scatter(&stoch_k)));
+        new_cols.push(Series::new(&format!("{}_stoch_d_3", target_column), scatter(&stoch_d)));
+        new_cols.push(Series::new(&format!("{}_adx_14", target_column), scatter(&adx)));
     }
 
     if df.column(&vol_col).is_ok() {
@@ -831,23 +789,22 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
             .collect();
 
         let obv = calculate_obv(&prices, &vols);
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_obv", target_column), scatter(&obv)),
-        )?;
+        new_cols.push(Series::new(&format!("{}_obv", target_column), scatter(&obv)));
     }
 
+    let out_df = df.hstack(&new_cols)?;
     Ok(out_df)
 }
 
 
 pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
-    let mut out_df = df.clone();
     let col_names: Vec<String> = df
         .get_column_names()
         .iter()
         .map(|&s| s.to_string())
         .collect();
+
+    let mut new_cols = Vec::new();
 
     for name in col_names {
         if name == "date" {
@@ -906,18 +863,14 @@ pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
             .map(|&opt| opt.map(|x| (x - mean) / std))
             .collect();
 
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_minmax", name), minmax),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_standard", name), standard),
-        )?;
+        new_cols.push(Series::new(&format!("{}_minmax", name), minmax));
+        new_cols.push(Series::new(&format!("{}_standard", name), standard));
     }
 
+    let out_df = df.hstack(&new_cols)?;
     Ok(out_df)
 }
+
 
 #[cfg(test)]
 mod tests {
