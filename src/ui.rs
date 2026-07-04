@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::{api, cache, pipeline};
+use anyhow::Result;
 
 #[cfg(windows)]
 pub fn clear_terminal() {
@@ -50,7 +50,7 @@ pub async fn run_interactive_menu(
             "Show Trending Coins",
             "Get Raw OHLCV Data",
             "Check Coin ID",
-            "Configure Cache TTL",
+            "Settings",
             "Exit",
         ];
 
@@ -74,7 +74,6 @@ pub async fn run_interactive_menu(
 
         match choice {
             "Run Portfolio Pipeline" => {
-                println!("Note: Interactive selections are not saved to disk. To set permanent defaults, edit your .env file.\n");
                 let coin: String = dialoguer::Input::new()
                     .with_prompt("Enter Coin ID(s) (comma-separated)")
                     .default("bitcoin".to_string())
@@ -189,7 +188,12 @@ pub async fn run_interactive_menu(
                         _ => "daily",
                     };
 
-                    (strategy_str.to_string(), fee, slippage, freq_str.to_string())
+                    (
+                        strategy_str.to_string(),
+                        fee,
+                        slippage,
+                        freq_str.to_string(),
+                    )
                 } else {
                     ("rsi".to_string(), 0.001, 0.0005, "daily".to_string())
                 };
@@ -277,18 +281,18 @@ pub async fn run_interactive_menu(
                             println!("{}", "-".repeat(81));
                             for (i, c) in coins.iter().enumerate() {
                                 if let Some(item) = c.get("item") {
-                                     let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                     let name =
-                                         item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                                     let symbol =
-                                         item.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                                     println!(
-                                         "{:<5} | {:<30} | {:<10} | {:<30}",
-                                         i + 1,
-                                         id,
-                                         symbol,
-                                         name
-                                     );
+                                    let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                    let name =
+                                        item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                    let symbol =
+                                        item.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+                                    println!(
+                                        "{:<5} | {:<30} | {:<10} | {:<30}",
+                                        i + 1,
+                                        id,
+                                        symbol,
+                                        name
+                                    );
                                 }
                             }
                         } else {
@@ -363,16 +367,41 @@ pub async fn run_interactive_menu(
                     }
                 }
             }
-            "Configure Cache TTL" => {
-                let new_ttl: i64 = dialoguer::Input::new()
-                    .with_prompt("Enter new Cache TTL in seconds")
-                    .default(cache_ttl)
-                    .interact_text()?;
-                cache_ttl = new_ttl;
-                cg_client = cg_client.with_ttl(cache_ttl);
-                yahoo_client = yahoo_client.with_ttl(cache_ttl);
-                println!("Cache TTL set to {} seconds.", cache_ttl);
-            }
+            "Settings" => loop {
+                clear_terminal();
+                println!("Note: Interactive selections are not saved to disk. To set permanent defaults, edit your .env file.\n");
+                let settings_options = &["Configure Cache TTL", "Back"];
+                let settings_selection = dialoguer::Select::new()
+                    .with_prompt("Select a setting")
+                    .default(0)
+                    .items(settings_options)
+                    .interact_opt()?;
+
+                let settings_choice = match settings_selection {
+                    Some(idx) => settings_options[idx],
+                    None => break,
+                };
+
+                if settings_choice == "Back" {
+                    break;
+                }
+
+                match settings_choice {
+                    "Configure Cache TTL" => {
+                        clear_terminal();
+                        let new_ttl: i64 = dialoguer::Input::new()
+                            .with_prompt("Enter new Cache TTL in seconds")
+                            .default(cache_ttl)
+                            .interact_text()?;
+                        cache_ttl = new_ttl;
+                        cg_client = cg_client.with_ttl(cache_ttl);
+                        yahoo_client = yahoo_client.with_ttl(cache_ttl);
+                        println!("Cache TTL set to {} seconds.", cache_ttl);
+                        wait_for_back();
+                    }
+                    _ => unreachable!(),
+                }
+            },
             "Exit" => {
                 println!("Goodbye!");
                 break;
@@ -380,7 +409,7 @@ pub async fn run_interactive_menu(
             _ => unreachable!(),
         }
 
-        if choice != "Exit" {
+        if choice != "Exit" && choice != "Settings" {
             wait_for_back();
         }
     }
