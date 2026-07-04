@@ -2,12 +2,28 @@
 
 ## Status
 
-- State: Backtest starting indices aligned across strategies and portfolios.
-- Last: Calculated start_idx based on the validity of all available indicators, ensuring matching time windows.
+- State: B&H caching implemented and US Treasury 10Y comparison row added.
+- Last: Cached B&H calculations across strategies and calculated dynamic US Treasury 10Y yields as a backtesting benchmark.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 29: Cache B&H and Add Treasury Benchmark
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Skip redundant B&H calculations across different strategy runs, and incorporate a US 10-Year Treasury Note yield (`^TNX`) benchmark row in backtest results.
+- Constraints: None.
+- Done:
+  - Defined `BhCache` in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs#L190-L417) and updated `run_backtest_for_asset` to accept `bh_cache: &mut Option<BhCache>`. On first run, it computes B&H and updates cache; subsequent runs copy B&H details directly.
+  - Linked `BhCache` in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L843-L1226) for both pipeline and standalone runs.
+  - Implemented dynamic US Treasury 10Y benchmark calculations in [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs#L881-L1230), compounding daily yields over the aligned backtesting time window.
+- Blocked: None.
+- Risk: None.
+- Artifact: [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
+- Verification: `cargo test` - 46 tests passed. Pipeline run manually verified to display `US_TREASURY_10Y` row with cumulative yields.
+- Pending: None.
 
 ### Session 28: Align Backtest Starting Indices
 

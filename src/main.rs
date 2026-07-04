@@ -843,9 +843,12 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             vec![strategy.to_lowercase()]
         };
 
+        let mut asset_bh_caches: std::collections::HashMap<String, Option<cdg::backtest::BhCache>> = std::collections::HashMap::new();
+
         // 1. Backtest individual assets
         for col in &currency_cols {
             for strat in &strats {
+                let cache_entry = asset_bh_caches.entry(col.to_string()).or_insert(None);
                 match cdg::backtest::run_backtest_for_asset(
                     &final_df,
                     col,
@@ -853,6 +856,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     fee,
                     slippage,
                     final_ann_factor,
+                    cache_entry,
                 ) {
                     Ok((metrics, equity, bh_equity)) => {
                         backtest_metrics.push(metrics);
@@ -881,6 +885,84 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     }
                 }
             }
+        }
+
+        // 2. US Treasury 10Y Benchmark Calculation
+        if final_df.column("^TNX").is_ok() {
+            let n_rows = final_df.height();
+            let mut start_idx = 0;
+            if !currency_cols.is_empty() {
+                let coin = &currency_cols[0];
+                let close_col = if final_df.column(&format!("{}_close", coin)).is_ok() {
+                    format!("{}_close", coin)
+                } else {
+                    coin.to_string()
+                };
+                let prices: Vec<Option<f64>> = final_df.column(&close_col)?.f64()?.into_iter().collect();
+                let rsi_col = format!("{}_rsi_14", coin);
+                let rsi: Option<Vec<Option<f64>>> = final_df.column(&rsi_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let macd_line_col = format!("{}_macd_line", coin);
+                let macd_line: Option<Vec<Option<f64>>> = final_df.column(&macd_line_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let macd_signal_col = format!("{}_macd_signal", coin);
+                let macd_signal: Option<Vec<Option<f64>>> = final_df.column(&macd_signal_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let macd_hist_col = format!("{}_macd_histogram", coin);
+                let macd_hist: Option<Vec<Option<f64>>> = final_df.column(&macd_hist_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let bb_upper_col = format!("{}_bollinger_upper", coin);
+                let bb_upper: Option<Vec<Option<f64>>> = final_df.column(&bb_upper_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let bb_lower_col = format!("{}_bollinger_lower", coin);
+                let bb_lower: Option<Vec<Option<f64>>> = final_df.column(&bb_lower_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let bb_mid_col = format!("{}_sma_20", coin);
+                let bb_mid: Option<Vec<Option<f64>>> = final_df.column(&bb_mid_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+
+                for i in 0..n_rows {
+                    let price_ok = prices[i].is_some();
+                    let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+                    let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                        && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                        && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+                    let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                        && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                        && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+
+                    if price_ok && rsi_ok && macd_ok && bb_ok {
+                        start_idx = i;
+                        break;
+                    }
+                }
+            }
+
+            let tnx_col: Vec<Option<f64>> = final_df.column("^TNX")?.f64()?.into_iter().collect();
+            let mut cum_yield = 1.0;
+            for i in (start_idx + 1)..n_rows {
+                if let Some(y) = tnx_col[i] {
+                    let daily_y = (y / 100.0) / final_ann_factor;
+                    cum_yield *= 1.0 + daily_y;
+                }
+            }
+
+            let final_treasury_return = (cum_yield - 1.0) * 100.0;
+            let treasury_metrics = cdg::backtest::BacktestMetrics {
+                coin: "US_TREASURY".to_string(),
+                currency: "10Y".to_string(),
+                strategy: "B&H".to_string(),
+                strategy_return: final_treasury_return,
+                buy_and_hold_return: final_treasury_return,
+                strategy_sharpe: 0.0,
+                buy_and_hold_sharpe: 0.0,
+                strategy_max_drawdown: 0.0,
+                buy_and_hold_max_drawdown: 0.0,
+                prediction_accuracy: 1.0,
+                prediction_r2: 0.0,
+                active_win_rate: 1.0,
+                prediction_rating: "N/A".to_string(),
+                strategy_rating: "good".to_string(),
+                true_positives: 0,
+                false_positives: 0,
+                true_negatives: 0,
+                false_negatives: 0,
+                total_trades: 0,
+            };
+            backtest_metrics.push(treasury_metrics);
         }
 
         // 2. Backtest optimized portfolios if available
@@ -1108,9 +1190,10 @@ async fn run_standalone_backtest(
     std::fs::create_dir_all(&run_dir)?;
 
     for (df, col) in coin_dfs.iter().zip(target_names.iter()) {
+        let mut bh_cache = None;
         for strat in &strats {
             // Standalone run uses default annualization 365.0
-            match cdg::backtest::run_backtest_for_asset(df, col, strat, fee, slippage, 365.0) {
+            match cdg::backtest::run_backtest_for_asset(df, col, strat, fee, slippage, 365.0, &mut bh_cache) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
@@ -1137,6 +1220,81 @@ async fn run_standalone_backtest(
                     println!("Warning: Backtest failed for {} ({}): {}", col, strat, e);
                 }
             }
+        }
+
+        // Add US Treasury benchmark row if ^TNX is present
+        if df.column("^TNX").is_ok() {
+            let n_rows = df.height();
+            let mut start_idx = 0;
+            let close_col = if df.column(&format!("{}_close", col)).is_ok() {
+                format!("{}_close", col)
+            } else {
+                col.to_string()
+            };
+            let prices: Vec<Option<f64>> = df.column(&close_col)?.f64()?.into_iter().collect();
+            let rsi_col = format!("{}_rsi_14", col);
+            let rsi: Option<Vec<Option<f64>>> = df.column(&rsi_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let macd_line_col = format!("{}_macd_line", col);
+            let macd_line: Option<Vec<Option<f64>>> = df.column(&macd_line_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let macd_signal_col = format!("{}_macd_signal", col);
+            let macd_signal: Option<Vec<Option<f64>>> = df.column(&macd_signal_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let macd_hist_col = format!("{}_macd_histogram", col);
+            let macd_hist: Option<Vec<Option<f64>>> = df.column(&macd_hist_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let bb_upper_col = format!("{}_bollinger_upper", col);
+            let bb_upper: Option<Vec<Option<f64>>> = df.column(&bb_upper_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let bb_lower_col = format!("{}_bollinger_lower", col);
+            let bb_lower: Option<Vec<Option<f64>>> = df.column(&bb_lower_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let bb_mid_col = format!("{}_sma_20", col);
+            let bb_mid: Option<Vec<Option<f64>>> = df.column(&bb_mid_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+
+            for i in 0..n_rows {
+                let price_ok = prices[i].is_some();
+                let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+                let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                    && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                    && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+                let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                    && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+                    && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+
+                if price_ok && rsi_ok && macd_ok && bb_ok {
+                    start_idx = i;
+                    break;
+                }
+            }
+
+            let tnx_col: Vec<Option<f64>> = df.column("^TNX")?.f64()?.into_iter().collect();
+            let mut cum_yield = 1.0;
+            for i in (start_idx + 1)..n_rows {
+                if let Some(y) = tnx_col[i] {
+                    let daily_y = (y / 100.0) / 365.0;
+                    cum_yield *= 1.0 + daily_y;
+                }
+            }
+
+            let final_treasury_return = (cum_yield - 1.0) * 100.0;
+            let treasury_metrics = cdg::backtest::BacktestMetrics {
+                coin: format!("{}_US_TREASURY", col.to_uppercase()),
+                currency: "10Y".to_string(),
+                strategy: "B&H".to_string(),
+                strategy_return: final_treasury_return,
+                buy_and_hold_return: final_treasury_return,
+                strategy_sharpe: 0.0,
+                buy_and_hold_sharpe: 0.0,
+                strategy_max_drawdown: 0.0,
+                buy_and_hold_max_drawdown: 0.0,
+                prediction_accuracy: 1.0,
+                prediction_r2: 0.0,
+                active_win_rate: 1.0,
+                prediction_rating: "N/A".to_string(),
+                strategy_rating: "good".to_string(),
+                true_positives: 0,
+                false_positives: 0,
+                true_negatives: 0,
+                false_negatives: 0,
+                total_trades: 0,
+            };
+            backtest_metrics.push(treasury_metrics);
         }
     }
 

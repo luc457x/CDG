@@ -190,6 +190,14 @@ fn calculate_rolling_std(values: &[f64], index: usize, period: usize) -> f64 {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct BhCache {
+    pub final_return: f64,
+    pub sharpe: f64,
+    pub drawdown: f64,
+    pub equity: Vec<f64>,
+}
+
 pub fn run_backtest_for_asset(
     df: &DataFrame,
     coin: &str,
@@ -197,6 +205,7 @@ pub fn run_backtest_for_asset(
     fee: f64,
     slippage: f64,
     annualization_factor: f64,
+    bh_cache: &mut Option<BhCache>,
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
     let close_col = if df.column(&format!("{}_close", coin)).is_ok() {
         format!("{}_close", coin)
@@ -375,7 +384,6 @@ pub fn run_backtest_for_asset(
     }
 
     let final_strat_return = ((equity[n - 1] - 10000.0) / 10000.0) * 100.0;
-    let final_bh_return = ((bh_equity[n - 1] - 10000.0) / 10000.0) * 100.0;
 
     let actual_returns_slice = &actual_returns[(start_idx + 1)..n];
     let strategy_returns_slice = &strategy_returns[(start_idx + 1)..n];
@@ -401,10 +409,26 @@ pub fn run_backtest_for_asset(
     };
 
     let strat_sharpe = calculate_sharpe(strategy_returns_slice, mean_rf, annualization_factor);
-    let bh_sharpe = calculate_sharpe(actual_returns_slice, mean_rf, annualization_factor);
+
+    let (final_bh_return, bh_sharpe, bh_drawdown) = if let Some(ref cache) = bh_cache {
+        bh_equity = cache.equity.clone();
+        (cache.final_return, cache.sharpe, cache.drawdown)
+    } else {
+        let final_bh = ((bh_equity[n - 1] - 10000.0) / 10000.0) * 100.0;
+        let bh_s = calculate_sharpe(actual_returns_slice, mean_rf, annualization_factor);
+        let bh_dd = calculate_max_drawdown(&bh_equity[start_idx..n]) * 100.0;
+
+        *bh_cache = Some(BhCache {
+            final_return: final_bh,
+            sharpe: bh_s,
+            drawdown: bh_dd,
+            equity: bh_equity.clone(),
+        });
+
+        (final_bh, bh_s, bh_dd)
+    };
 
     let strat_drawdown = calculate_max_drawdown(&equity[start_idx..n]) * 100.0;
-    let bh_drawdown = calculate_max_drawdown(&bh_equity[start_idx..n]) * 100.0;
 
     let (tp, fp, tn, fn_count) = calculate_confusion_matrix(signals_slice, actual_returns_slice);
     let total_predictions = tp + fp + tn + fn_count;
@@ -727,18 +751,18 @@ mod tests {
             Series::new("bitcoin_usd_sma_20", vec![100.0, 100.0, 100.0, 100.0]),
         ]).unwrap();
 
-        let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", 0.001, 0.0005, 365.0).unwrap();
+        let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", 0.001, 0.0005, 365.0, &mut None).unwrap();
         assert_eq!(metrics_rsi.coin, "bitcoin".to_string());
         assert_eq!(metrics_rsi.strategy, "rsi".to_string());
         assert_eq!(equity_rsi.len(), 4);
         assert_eq!(bh_rsi.len(), 4);
 
         // MACD strategy
-        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", 0.001, 0.0005, 365.0).unwrap();
+        let (metrics_macd, equity_macd, bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", 0.001, 0.0005, 365.0, &mut None).unwrap();
         assert_eq!(metrics_macd.strategy, "macd");
 
         // Bollinger strategy
-        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", 0.001, 0.0005, 365.0).unwrap();
+        let (metrics_bb, equity_bb, bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", 0.001, 0.0005, 365.0, &mut None).unwrap();
         assert_eq!(metrics_bb.strategy, "bollinger");
     }
 
