@@ -843,6 +843,10 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             vec![strategy.to_lowercase()]
         };
 
+        let backtest_dir = format!("{}/backtests", run_dir);
+        cdg::utils::validate_safe_path(&backtest_dir)?;
+        std::fs::create_dir_all(&backtest_dir)?;
+
         let mut asset_bh_caches: std::collections::HashMap<String, Option<cdg::backtest::BhCache>> = std::collections::HashMap::new();
 
         // 1. Backtest individual assets
@@ -868,7 +872,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                             .into_iter()
                             .map(|opt| opt.unwrap_or("").to_string())
                             .collect();
-                        let plot_path = format!("{}/{}_{}_backtest.png", run_dir, col, strat);
+                        let plot_path = format!("{}/{}_{}_backtest.png", backtest_dir, col, strat);
                         if let Err(e) = cdg::plot::plot_backtest_equity(
                             &dates,
                             &equity,
@@ -985,7 +989,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
-                    let plot_path = format!("{}/max_sharpe_portfolio_rebalanced_backtest.png", run_dir);
+                    let plot_path = format!("{}/max_sharpe_portfolio_rebalanced_backtest.png", backtest_dir);
                     if let Err(e) = cdg::plot::plot_backtest_equity(
                         &dates,
                         &equity,
@@ -1013,7 +1017,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
-                    let plot_path = format!("{}/min_vol_portfolio_rebalanced_backtest.png", run_dir);
+                    let plot_path = format!("{}/min_vol_portfolio_rebalanced_backtest.png", backtest_dir);
                     if let Err(e) = cdg::plot::plot_backtest_equity(
                         &dates,
                         &equity,
@@ -1038,7 +1042,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             println!("{}", backtest_table);
 
             // Export to CSV
-            let csv_report_path = format!("{}/backtest_report.csv", run_dir);
+            let csv_report_path = format!("{}/backtest_report.csv", backtest_dir);
             if let Ok(mut file) = std::fs::File::create(&csv_report_path) {
                 if let Err(e) = writeln!(
                     file,
@@ -1070,7 +1074,7 @@ async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             }
 
             // Export to JSON
-            let json_report_path = format!("{}/backtest_report.json", run_dir);
+            let json_report_path = format!("{}/backtest_report.json", backtest_dir);
             let mut report_map = std::collections::HashMap::new();
             for m in &backtest_metrics {
                 report_map.insert(format!("{}_{}", m.coin, m.strategy), m.clone());
