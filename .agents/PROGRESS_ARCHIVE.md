@@ -2,6 +2,29 @@
 
 ## Archived Sessions
 
+### Session 33: Modularization and Polars Optimization
+
+- Date: 2026-07-04
+- Agent: Antigravity
+- Goal: Clean up CLI monolith, optimize DataFrame column insertions, and simulate portfolio rebalancing transaction costs.
+- Constraints: None.
+- Done:
+  - Created [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs) and [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) to modularize CLI logic from [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
+  - Registered new modules in [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs) and cleaned up [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
+  - Optimized [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs) by batch-inserting calculated indicators using `hstack` instead of iterating `.insert_column` calls.
+  - Added transaction fee and slippage math to portfolio daily rebalancing in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs) and [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs).
+  - Added calendar-based rebalancing frequency options (daily, weekly, monthly) configurable via `--rebalance-frequency` CLI flag and `CDG_REBALANCE_FREQUENCY` env var.
+  - Modeled weight drift on non-rebalancing days in the portfolio simulation.
+  - Added interactive prompt selections for rebalancing frequency.
+  - Created ADR 001 to document choices on native Polars expressions for indicators.
+  - Created [env.example](file:///c:/Users/lucas/Code/CDG/.env.example) template file.
+  - Added warning in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) notifying user to edit `.env` for permanent defaults.
+- Blocked: None.
+- Risk: None.
+- Artifacts: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs), [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs), [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs), [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [Cargo.toml](file:///c:/Users/lucas/Code/CDG/Cargo.toml), [env.example](file:///c:/Users/lucas/Code/CDG/.env.example).
+- Verification: `cargo test` - 50 tests passed.
+- Pending: None.
+
 ### Session 32: Custom Backtesting Strategy JSON Support
 
 - Date: 2026-07-04

@@ -23,6 +23,12 @@ Created whenever `run-pipeline` executes:
 - `performance.png`: Line chart displaying cumulative asset growth/performance normalized to 100%.
 - `risk_return.png`: Scatter plot mapping expected returns against volatility risk.
 - `{coin}_{currency}_returns.png`: Daily returns line charts for each specific asset pair.
+- `backtests/`: Directory containing backtest reports and equity curve plots (created when `--backtest` is enabled on `run-pipeline`):
+  - `backtest_report.csv`: CSV summary of strategy and portfolio backtest metrics.
+  - `backtest_report.json`: JSON summary of strategy and portfolio backtest metrics.
+  - `{coin}_{currency}_{strategy}_backtest.png`: Equity curve plots comparing strategy vs buy-and-hold.
+  - `max_sharpe_portfolio_rebalanced_backtest.png`: Equity curve for the Max Sharpe rebalanced portfolio.
+  - `min_vol_portfolio_rebalanced_backtest.png`: Equity curve for the Minimum Volatility rebalanced portfolio.
 - `raw_ohlcv/`: Directory containing raw OHLCV files (saved in the configured raw format: `.json` or `.csv`):
   - `{coin}_{currency}.csv` (if CSV format is selected)
   - `{coin}_{currency}.json` (if JSON format is selected)
@@ -33,6 +39,14 @@ Created when executing standalone raw candlestick (`ohlcv`) data exports:
 
 - `{coin}_{currency}.csv` (if CSV format is selected)
 - `{coin}_{currency}.json` (if JSON format is selected)
+
+### C. Standalone Backtest Directory
+Created when executing the standalone `backtest` subcommand:
+`{output_dir}/backtest_run_YYYYMMDD_HHMMSS/`
+
+- `backtest_report.csv`
+- `backtest_report.json`
+- `{coin}_{currency}_{strategy}_backtest.png`
 
 ---
 
@@ -76,6 +90,6 @@ graph LR
 - **Resource Footprint**: The application runs efficiently under `--light` mode, keeping memory usage strictly under 100MB to fit within the GCP Free Tier.
 
 ### B. Storage & Analytical Integrations (BigQuery & GCS)
-- **Data Lakeing**: Exported `.parquet` files can be synchronized directly to a **Google Cloud Storage (GCS)** bucket.
+- **Data Lake**: Exported `.parquet` files can be synchronized directly to a **Google Cloud Storage (GCS)** bucket.
 - **BigQuery Federated Queries**: Set up a BigQuery external table pointing to your GCS Parquet path to query processed indicators using SQL without incurring DB storage fees.
 - **Vertex AI Model Training**: Downstream Vertex AI training pipelines can pull pre-processed scaled feature columns directly from GCS Parquet files.

@@ -4,9 +4,9 @@
 
 ---
 
-CDG supports defining custom technical backtesting strategies programmatically via structured JSON files. You can pass the path to a custom strategy JSON file (e.g. `custom_strategy.json`) to the `--strategy` CLI argument or the `CDG_BACKTEST_STRATEGY` environment variable.
+CDG supports defining custom technical backtesting strategies programmatically via structured JSON files, as well as built-in strategies (`rsi`, `macd`, `bollinger`, `all`). You can pass a custom strategy JSON file path to the `--strategy` CLI argument or the `CDG_BACKTEST_STRATEGY` environment variable.
 
-Custom strategy JSON files can define a single strategy, a list of strategies, or a key-value map of strategies.
+When `--backtest` is enabled on `run-pipeline`, or when using the standalone `backtest` subcommand, CDG evaluates strategies on each target asset, computes transaction costs (`--fee`, `--slippage`), and optionally rebalances optimized portfolios at `daily`, `weekly`, or `monthly` frequencies. Results include equity curves, buy-and-hold comparisons, US Treasury 10Y benchmarks, and consolidated CSV/JSON reports.
 
 ---
 
@@ -104,6 +104,34 @@ Formula: `conf_t = clamp(abs(col_value) * multiplier, min, max)`
   "max": 1.0
 }
 ```
+
+---
+
+## Built-in Strategies
+
+If `--strategy` is set to a built-in name instead of a `.json` path, CDG uses pre-defined logic:
+
+| Strategy | Buy Signal | Sell Signal | Notes |
+| :--- | :--- | :--- | :--- |
+| `rsi` | RSI < 30 | RSI > 70 | Confidence scales with distance from thresholds. |
+| `macd` | MACD Line > Signal Line | MACD Line < Signal Line | Confidence scales by histogram volatility. |
+| `bollinger` | Price < Lower Band | Price > Upper Band | Confidence scales by distance from band. |
+| `all` | All three strategies above executed sequentially. | | |
+
+---
+
+## Backtest Execution Details
+
+When running `run-pipeline --backtest` or the standalone `backtest` subcommand:
+
+- **Transaction Costs**: Every trade incurs `fee + slippage` deducted from equity.
+- **Rebalancing Frequency**: Optimized portfolio backtests can rebalance `daily`, `weekly`, or `monthly`.
+- **US Treasury Benchmark**: If Yahoo Finance `^TNX` data is present, CDG computes a 10-Year Treasury buy-and-hold benchmark for risk-adjusted comparison.
+- **Reports**: 
+  - Console ASCII table with strategy return, buy-and-hold return, Sharpe ratio, max drawdown, win rate, and rating.
+  - CSV report: `{run_dir}/backtests/backtest_report.csv`
+  - JSON report: `{run_dir}/backtests/backtest_report.json`
+- **Plots**: Per-asset equity curve PNGs and optimized portfolio rebalanced equity PNGs are saved under `{run_dir}/backtests/`.
 
 ---
 

@@ -15,28 +15,48 @@ The Yahoo Finance client fetches historical price charts for traditional stock m
 - **HTTP Engine**: Built on `reqwest::Client` with a standard browser User-Agent header to avoid automated scraper detection blocks.
 - **Endpoints**:
   - `GET /v8/finance/chart/{ticker}?period1={start}&period2={end}&interval=1d`
-- **Ping Check**: Pings Yahoo Finance by querying the last 24 hours of data for the S&P 500 index (`^GSPC`).
+- **Ping Check**: Pings Yahoo Finance by querying the previous 24 hours of data for the S&P 500 index (`^GSPC`) rounded to the nearest hour.
 
 ---
 
 ## 2. CoinGecko Client (`src/api/coingecko.rs`)
 
-The CoinGecko API client retrieves historical prices, cryptocurrency market stats, and trending assets.
+The CoinGecko API client retrieves historical prices, cryptocurrency market stats, trending assets, exchange tickers, and corporate treasury data.
 
+- **API Keys**: Supports Demo and Pro API keys via `COINGECKO_DEMO_API_KEY`, `COINGECKO_PRO_API_KEY`, or generic `COINGECKO_API_KEY` + `COINGECKO_API_KEY_TYPE=pro`. Pro keys switch the base URL to `pro-api.coingecko.com`.
 - **Rate Limit Handlers (429 Retry)**:
-  - If a cache miss occurs, the client automatically waits for **3 seconds** before making a new HTTP request to prevent rate limits.
-  - On receiving an HTTP `429 Too Many Requests` response, it enters an exponential backoff loop, retrying up to **4 times** (doubling delay times, starting at 10 seconds).
+  - On receiving an HTTP `429 Too Many Requests` response, it enters an exponential backoff loop, retrying up to **4 times** (doubling delay times, starting at **10 seconds**).
+  - There is no fixed pre-request delay on cache misses.
 - **Endpoint Integrations**:
   - `/ping`: Check system connectivity.
-  - `/simple/supported_vs_currencies`: Retrieve vs currencies (e.g. `usd`, `eur`).
+  - `/simple/supported_vs_currencies`: Retrieve vs currencies list.
   - `/coins/list`: Get a list of all coins.
-  - `/coins/markets`: Fetch market data sorted by market cap (top 50 by default).
-  - `/search/trending`: Returns the top trending coins.
+  - `/coins/markets`: Fetch market data sorted by market cap.
+  - `/simple/price`: Quick price lookup by coin IDs.
+  - `/global`: Global cryptocurrency market data.
+  - `/companies/public_treasury/{coin_id}`: Public company holdings for a coin.
+  - `/coins/{id}/tickers`: Exchange tickers for a specific coin (used for orderbook metrics).
+  - `/coins/{id}/market_chart`: Historical price chart for a coin (days-based range).
+  - `/coins/{id}/market_chart/range`: Historical price chart for a coin (Unix timestamp range).
   - `/coins/{id}/ohlc`: Retrieve historical open-high-low-close candlestick data.
+  - `/search/trending`: Returns the top trending coins.
+  - `/global/decentralized_finance_defi`: DeFi global market data.
 
 ---
 
-## 3. SQLite CacheBackend (`src/cache.rs`)
+## 3. Orderbook Metrics (`src/analysis.rs`)
+
+During every `run-pipeline` execution, CDG fetches exchange tickers for each target coin via `GET /coins/{id}/tickers` and computes aggregate orderbook quality metrics:
+
+- **Average Bid-Ask Spread**: Mean `bid_ask_spread_percentage` across tracked exchanges.
+- **Total Ticker Volume**: Sum of `volume` across exchange tickers.
+- **Price Standard Deviation**: Standard deviation of `last_price` across exchanges, indicating cross-exchange price dispersion.
+
+These metrics are printed to the terminal at the start of each pipeline run.
+
+---
+
+## 4. SQLite CacheBackend (`src/cache.rs`)
 
 To guarantee high efficiency and compliance with strict external API rate limits, CDG implements a persistent local caching mechanism powered by SQLite (`sqlx` + `tokio`).
 
@@ -70,7 +90,7 @@ CREATE TABLE IF NOT EXISTS api_cache (
 
 ---
 
-## 4. Cache Optimization: Timestamp Boundary Alignment
+## 5. Cache Optimization: Timestamp Boundary Alignment
 
 CryptoDataGather needs to fetch historical data for custom time periods (e.g. `--days 90`). Standard dynamic API timestamp ranges create minor hourly changes in request URLs, leading to cache misses.
 

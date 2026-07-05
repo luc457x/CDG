@@ -1,6 +1,6 @@
 # CryptoDataGather (CDG)
 
-[🏠 Home](README.md) • [📖 Overview](doc/README.md) • [🏗️ Architecture](doc/architecture.md) • [💻 Setup](doc/installation_usage.md) • [🔌 API & Cache](doc/api_cache.md) • [📊 Processing & Optimization](doc/analysis_optimization.md) • [🚀 Deployment](doc/deployment.md)
+[🏠 Home](README.md) • [📖 Overview](doc/README.md) • [🏗️ Architecture](doc/architecture.md) • [💻 Setup](doc/installation_usage.md) • [🔌 API & Cache](doc/api_cache.md) • [📊 Processing & Optimization](doc/analysis_optimization.md) • [⚙️ Custom Strategies](doc/custom_strategies.md) • [🚀 Deployment](doc/deployment.md)
 
 ---
 
@@ -16,19 +16,23 @@ A comprehensive set of modular guides is available under the `doc/` directory:
 - **[System Architecture](doc/architecture.md)**
 - **[Setup & CLI Usage Guide](doc/installation_usage.md)**
 - **[API Clients & SQLite Caching](doc/api_cache.md)**
-- **[Feature Engineering & Portfolio Math](doc/analysis_optimization.md)**
+- **Feature Engineering & Portfolio Math](doc/analysis_optimization.md)
+- **[Custom Backtesting Strategies](doc/custom_strategies.md)**
 - **[Deployment & Cloud Operations](doc/deployment.md)**
 
 ## Features
 
-- **Multi-Source Fetching**: Queries CoinGecko API for cryptocurrency prices and scrapes Yahoo Finance API for traditional market benchmarks (like S&P 500).
+- **Multi-Source Fetching**: Queries CoinGecko API for cryptocurrency prices, exchange tickers, and trends, and scrapes Yahoo Finance API for traditional market benchmarks (like S&P 500).
 - **SQLite Caching Layer**: Uses an asynchronous SQLite caching system (`sqlx` + `tokio`) to persist API response bodies locally, preventing API rate limit blocks.
 - **Data Alignment**: Merges 24/7 cryptocurrency data with 5-day traditional stock data using either weekend forward-fill alignment (default) or weekend dropping.
 - **Technical Indicators**: Calculates simple returns, log returns, SMA, EMA, RSI, MACD, and Bollinger Bands using high-performance `polars` expressions.
+- **Advanced Indicators**: Computes ATR, Stochastic Oscillator, ADX, and OBV when OHLCV columns are available.
+- **Orderbook Metrics**: Aggregates average bid-ask spread, total ticker volume, and cross-exchange price standard deviation from CoinGecko exchange tickers.
 - **ML Preprocessing**: Normalizes all indicators/prices using MinMax scaling and Standard Z-Score normalization (`--prep-ml`) for downstream Python / PyTorch / Jupyter ML training.
-- **Plotting**: Generates high-quality PNG visualization charts for normalized performance, percentage returns, and risk/return scatter profiles.
+- **Plotting**: Generates high-quality PNG visualization charts for normalized performance, percentage returns, risk/return scatter profiles, efficient frontier, and backtest equity curves.
 - **Lightweight Mode**: A memory-friendly mode optimized for GCP free-tier Cloud Run / micro instances that limits calculations to Bitcoin and the last 30 days of data.
 - **Portfolio Optimization**: Runs annualized Monte Carlo portfolio simulation to determine Max Sharpe Ratio and Minimum Volatility weights.
+- **Strategy Backtesting**: Built-in strategies (`rsi`, `macd`, `bollinger`, `all`) or custom JSON strategies with configurable fees, slippage, transaction costs, and rebalancing frequencies. Compares against buy-and-hold and US Treasury 10Y benchmarks.
 - **CLI Polish**: Integrates real-time progress feedback (spinners/progress bars) and logs final optimal portfolios in clean ASCII tables.
 - **Clean Architecture**: Compiles as both a CLI tool (`cdg`) and a reusable library (`cdg`).
 
@@ -91,7 +95,13 @@ For automation and scripting, the following subcommands are supported:
 - **check-coin**: Validates a CoinGecko ID and suggests close matches if invalid:
 
   ```bash
-  cargo run -- check-coin --coin bnb
+  cargo run -- check-coin bnb
+  ```
+
+- **backtest**: Runs a standalone strategy backtest on a coin with configurable fees, slippage, and rebalancing. Supports built-in strategies (`rsi`, `macd`, `bollinger`, `all`) or a custom JSON strategy file:
+
+  ```bash
+  cargo run -- backtest -c bitcoin -v usd -d 90 --strategy rsi --fee 0.001 --slippage 0.0005 --rebalance-frequency daily
   ```
 
 ### CLI Arguments & Options Reference (for `run-pipeline`)
@@ -109,6 +119,13 @@ For automation and scripting, the following subcommands are supported:
 | `-o` | `--output-prefix` | Output file path prefix | `{output_dir}/output` |
 | | `--raw-format` | Raw OHLCV export format (`json` or `csv`) | `json` (or `CDG_RAW_FORMAT` env) |
 | | `--seed` | Optional RNG seed for deterministic Monte Carlo simulation | `None` |
+| | `--concurrency` | CoinGecko query concurrency limit (default: 1 for demo/free keys, 3 for pro keys) | `None` |
+| | `--annualization-factor` | Override annualization factor for returns/volatility (default: 252 if `--drop-weekends`, else 365) | `None` |
+| | `--backtest` | Run strategy and portfolio backtesting | `false` |
+| | `--strategy` | Built-in strategy (`rsi`, `macd`, `bollinger`, `all`) or path to custom strategy JSON (overridable via `CDG_BACKTEST_STRATEGY`) | `rsi` |
+| | `--fee` | Transaction fee as decimal | `0.001` |
+| | `--slippage` | Slippage as decimal | `0.0005` |
+| | `--rebalance-frequency` | Portfolio rebalancing frequency (`daily`, `weekly`, `monthly`) | `daily` |
 
 ---
 
@@ -137,8 +154,8 @@ The SQLite cache avoids rate limit blocks (429 errors) and speeds up repeated ru
 
 - Request URLs are hashed and stored in the SQLite database with their response bodies.
 - A default 5-minute Time-To-Live (TTL) is enforced.
+- **Rate Limit Handling**: On HTTP 429, CoinGecko retries up to 4 times with exponential backoff starting at 10 seconds. Yahoo Finance retries up to 4 times starting at 2 seconds.
 - **Timestamp Boundary Alignment:** To make cache hits reliable across multiple runs throughout the same day, start and end timestamps for API range requests are rounded to the nearest daily boundary (e.g. `00:00:00 UTC`). This ensures that the generated query URL remains identical and hits the cache rather than triggering a new network request.
-- **Demo Rate Limiter:** If a cache miss occurs, the client automatically waits for 2 seconds before calling the CoinGecko API. This delay prevents rate limits when fetching multiple assets or currencies.
 
 ### 3. Weekend Gap Alignment (`--drop-weekends`)
 
@@ -166,7 +183,7 @@ For all coin-currency combinations, the library calculates high-performance tech
 
 When there are at least two assets to compare, the program automatically runs a Monte Carlo simulation of 10,000 random portfolios:
 
-- **Expected Return and Volatility**: Calculations are annualized (using a standard 365-day year assumption for cryptocurrency assets).
+- **Expected Return and Volatility**: Calculations are annualized using a configurable factor (default `365.0`, or `252.0` when `--drop-weekends` is active).
 - **Optimization Outputs**:
   - **Max Sharpe Ratio**: The portfolio maximizing expected excess returns per unit of volatility (assuming risk-free rate = 0).
   - **Minimum Volatility**: The portfolio with the absolute lowest risk.
@@ -193,6 +210,12 @@ cdg_files/run_20260613_091730/
 ├── performance.png         # Line plot comparing asset performance normalized to 100%
 ├── risk_return.png         # Scatter plot showing return mean vs volatility risk
 ├── bitcoin_usd_returns.png # Returns line charts for each coin-currency pair
+├── backtests/              # Backtest reports and equity curve plots (when --backtest is enabled)
+│   ├── backtest_report.csv
+│   ├── backtest_report.json
+│   ├── bitcoin_usd_rsi_backtest.png
+│   ├── max_sharpe_portfolio_rebalanced_backtest.png
+│   └── min_vol_portfolio_rebalanced_backtest.png
 └── raw_ohlcv/              # Raw OHLCV files folder (JSON/CSV) for each coin-currency pair
 ```
 

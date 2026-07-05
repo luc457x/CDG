@@ -2,12 +2,32 @@
 
 ## Status
 
-- State: Settings sub-menu added to interactive CLI mode.
-- Last: Replaced Configure Cache TTL with Settings menu and moved warning print inside it.
+- State: Documentation synchronized with current codebase.
+- Last: Updated doc/*.md and README.md for new backtesting, annualization, orderbook metrics, and CLI flags.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 35: Sync Documentation to Codebase
+
+- Date: 2026-07-05
+- Agent: Antigravity
+- Goal: Update documentation across doc/*.md and README.md to match current codebase state after backtesting and analysis expansion.
+- Constraints: None.
+- Done:
+  - Rebuilt [doc/api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md) with accurate CoinGecko endpoints (tickers, market_chart, market_chart/range, simple/price, global, companies/public_treasury, global/decentralized_finance_defi), fixed stale rate-limit delay claim (no fixed cache-miss delay; retries start at 10s), and added orderbook metrics section.
+  - Extended [doc/installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md) with `backtest` subcommand, added `run-pipeline` flags (`--concurrency`, `--annualization-factor`, `--backtest`, `--strategy`, `--fee`, `--slippage`, `--rebalance-frequency`), and fixed `check-coin` positional argument note.
+  - Updated [doc/analysis_optimization.md](file:///c:/Users/lucas/Code/CDG/doc/analysis_optimization.md) to document annualization factor defaults: `252.0` when `--drop-weekends` is active, `365.0` otherwise.
+  - Expanded [doc/custom_strategies.md](file:///c:/Users/lucas/Code/CDG/doc/custom_strategies.md) with built-in strategies table (`rsi`, `macd`, `bollinger`, `all`), backtest execution details (transaction fees, slippage, rebalancing frequencies, US Treasury benchmark, CSV/JSON reports, equity curve plots).
+  - Updated [doc/architecture.md](file:///c:/Users/lucas/Code/CDG/doc/architecture.md) Mermaid diagram to include orderbook metrics, ML prep, optimization, backtesting, and export layers. Expanded Core Components with current modules (`pipeline`, `backtest`, `ui`, `export`, `utils`).
+  - Fixed typo in [doc/deployment.md](file:///c:/Users/lucas/Code/CDG/doc/deployment.md) ("Data Lakeing" -> "Data Lake") and added `backtests/` directory listing plus standalone `backtest_run_` directory.
+  - Updated [README.md](file:///c:/Users/lucas/Code/CDG/README.md) and [doc/README.md](file:///c:/Users/lucas/Code/CDG/doc/README.md) with missing custom-strategies doc links, new features (orderbook metrics, advanced indicators, strategy backtesting), `backtest` subcommand example, expanded CLI flags table, and updated output directory tree with `backtests/`.
+- Blocked: None.
+- Risk: None.
+- Artifact: [doc/api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md), [doc/installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md), [doc/analysis_optimization.md](file:///c:/Users/lucas/Code/CDG/doc/analysis_optimization.md), [doc/custom_strategies.md](file:///c:/Users/lucas/Code/CDG/doc/custom_strategies.md), [doc/architecture.md](file:///c:/Users/lucas/Code/CDG/doc/architecture.md), [doc/deployment.md](file:///c:/Users/lucas/Code/CDG/doc/deployment.md), [README.md](file:///c:/Users/lucas/Code/CDG/README.md), [doc/README.md](file:///c:/Users/lucas/Code/CDG/doc/README.md).
+- Verification: Manually inspected updated documentation files and verified cross-links and relative paths resolve correctly.
+- Pending: None.
 
 ### Session 34: Add Settings Submenu to Interactive UI
 
@@ -26,27 +46,4 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 - Risk: None.
 - Artifact: [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs), [SPEC.md](file:///c:/Users/lucas/Code/CDG/.agents/SPEC.md), [installation_usage.md](file:///c:/Users/lucas/Code/CDG/doc/installation_usage.md), [api_cache.md](file:///c:/Users/lucas/Code/CDG/doc/api_cache.md).
 - Verification: Compiled successfully using `cargo check`.
-- Pending: None.
-
-### Session 33: Modularization and Polars Optimization
-
-- Date: 2026-07-04
-- Agent: Antigravity
-- Goal: Clean up CLI monolith, optimize DataFrame column insertions, and simulate portfolio rebalancing transaction costs.
-- Constraints: None.
-- Done:
-  - Created [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs) and [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) to modularize CLI logic from [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
-  - Registered new modules in [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs) and cleaned up [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs).
-  - Optimized [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs) by batch-inserting calculated indicators using `hstack` instead of iterating `.insert_column` calls.
-  - Added transaction fee and slippage math to portfolio daily rebalancing in [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs) and [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs).
-  - Added calendar-based rebalancing frequency options (daily, weekly, monthly) configurable via `--rebalance-frequency` CLI flag and `CDG_REBALANCE_FREQUENCY` env var.
-  - Modeled weight drift on non-rebalancing days in the portfolio simulation.
-  - Added interactive prompt selections for rebalancing frequency.
-  - Created ADR 001 to document choices on native Polars expressions for indicators.
-  - Created [env.example](file:///c:/Users/lucas/Code/CDG/.env.example) template file.
-  - Added warning in [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs) notifying user to edit `.env` for permanent defaults.
-- Blocked: None.
-- Risk: None.
-- Artifacts: [main.rs](file:///c:/Users/lucas/Code/CDG/src/main.rs), [lib.rs](file:///c:/Users/lucas/Code/CDG/src/lib.rs), [pipeline.rs](file:///c:/Users/lucas/Code/CDG/src/pipeline.rs), [ui.rs](file:///c:/Users/lucas/Code/CDG/src/ui.rs), [analysis.rs](file:///c:/Users/lucas/Code/CDG/src/analysis.rs), [backtest.rs](file:///c:/Users/lucas/Code/CDG/src/backtest.rs), [Cargo.toml](file:///c:/Users/lucas/Code/CDG/Cargo.toml), [env.example](file:///c:/Users/lucas/Code/CDG/.env.example).
-- Verification: `cargo test` - 50 tests passed.
 - Pending: None.
