@@ -115,16 +115,15 @@ async fn test_coingecko_tickers() {
 }
 
 #[tokio::test]
-async fn test_coingecko_check_coin_id() {
-    use cdg::api::coingecko::CoinSuggestion;
+async fn test_check_coin_exact() {
+    use cdg::api::coingecko::CoinResolution;
 
-    let db_path = "tests/test_coingecko_resolve_coin_id.db";
+    let db_path = "tests/test_check_coin_exact.db";
     cleanup_db(db_path);
     let cache = Cache::new(db_path).await.unwrap();
 
     let mock_response = r#"[
-        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
-        {"id": "binancecoin", "symbol": "bnb", "name": "BNB"}
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}
     ]"#;
     let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
 
@@ -132,28 +131,67 @@ async fn test_coingecko_check_coin_id() {
         .unwrap()
         .with_base_url(base_url);
 
-    // Test exact ID match (case-insensitive) - should return None
-    assert_eq!(client.check_coin_id("Bitcoin").await.unwrap(), None);
-
-    // Test symbol match - should suggest binancecoin
-    let suggestions = client.check_coin_id("bnb").await.unwrap().unwrap();
-    assert_eq!(suggestions.len(), 1);
     assert_eq!(
-        suggestions[0],
-        CoinSuggestion {
-            id: "binancecoin".to_string(),
-            symbol: "bnb".to_string(),
-            name: "BNB".to_string(),
-        }
+        client.check_coin_id("Bitcoin").await.unwrap(),
+        CoinResolution::Exact("bitcoin".to_string())
     );
 
-    // Test non-existent coin - should return empty suggestions
-    let suggestions_empty = client
-        .check_coin_id("unknown_token")
-        .await
+    cleanup_db(db_path);
+    drop(_server_handle);
+}
+
+#[tokio::test]
+async fn test_check_coin_ambiguous() {
+    use cdg::api::coingecko::CoinResolution;
+
+    let db_path = "tests/test_check_coin_ambiguous.db";
+    cleanup_db(db_path);
+    let cache = Cache::new(db_path).await.unwrap();
+
+    let mock_response = r#"[
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+        {"id": "bitcoin-cash", "symbol": "bch", "name": "Bitcoin Cash"}
+    ]"#;
+    let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
+
+    let client = CoinGeckoClient::new(std::sync::Arc::new(cache))
         .unwrap()
-        .unwrap();
-    assert!(suggestions_empty.is_empty());
+        .with_base_url(base_url);
+
+    let mut resolved = match client.check_coin_id("bit").await.unwrap() {
+        CoinResolution::Ambiguous(list) => list,
+        other => panic!("Expected Ambiguous, got {:?}", other),
+    };
+    resolved.sort();
+    let mut expected = vec!["bitcoin-cash".to_string(), "bitcoin".to_string()];
+    expected.sort();
+    assert_eq!(resolved, expected);
+
+    cleanup_db(db_path);
+    drop(_server_handle);
+}
+
+#[tokio::test]
+async fn test_check_coin_not_found() {
+    use cdg::api::coingecko::CoinResolution;
+
+    let db_path = "tests/test_check_coin_not_found.db";
+    cleanup_db(db_path);
+    let cache = Cache::new(db_path).await.unwrap();
+
+    let mock_response = r#"[
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}
+    ]"#;
+    let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
+
+    let client = CoinGeckoClient::new(std::sync::Arc::new(cache))
+        .unwrap()
+        .with_base_url(base_url);
+
+    assert_eq!(
+        client.check_coin_id("unknown_token").await.unwrap(),
+        CoinResolution::NotFound
+    );
 
     cleanup_db(db_path);
     drop(_server_handle);

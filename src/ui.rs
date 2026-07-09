@@ -221,6 +221,8 @@ pub async fn run_interactive_menu(
                     rebalance_frequency: &rebalance_frequency,
                     coingecko_base_url: None,
                     yahoo_base_url: None,
+                    plots: true,
+                    optimize: true,
                 })
                 .await
                 {
@@ -346,23 +348,23 @@ pub async fn run_interactive_menu(
                     .interact_text()?;
 
                 println!("Checking CoinGecko ID for '{}'...", coin_to_check);
+                use crate::api::coingecko::CoinResolution;
                 match cg_client.check_coin_id(&coin_to_check).await {
-                    Ok(None) => {
-                        println!("Success: '{}' is a valid CoinGecko ID.", coin_to_check);
+                    Ok(CoinResolution::Exact(resolved_id)) => {
+                        println!(
+                            "Success: '{}' is a valid CoinGecko ID (resolves to '{}').",
+                            coin_to_check, resolved_id
+                        );
                     }
-                    Ok(Some(suggestions)) => {
-                        println!("Error: '{}' is not a valid CoinGecko ID.", coin_to_check);
-                        if suggestions.is_empty() {
-                            println!("No suggestions found.");
-                        } else {
-                            println!("\nSuggested IDs:");
-                            for sug in suggestions {
-                                println!(
-                                    "  - {} (symbol: {}, name: {})",
-                                    sug.id, sug.symbol, sug.name
-                                );
-                            }
+                    Ok(CoinResolution::Ambiguous(suggestions)) => {
+                        println!("Warning: '{}' is ambiguous.", coin_to_check);
+                        println!("\nSuggested IDs:");
+                        for sug in suggestions {
+                            println!("  - {}", sug);
                         }
+                    }
+                    Ok(CoinResolution::NotFound) => {
+                        println!("Error: '{}' is not a valid CoinGecko ID and no suggestions were found.", coin_to_check);
                     }
                     Err(e) => {
                         println!("Error: Failed to query CoinGecko coins list: {}", e);

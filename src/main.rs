@@ -88,6 +88,22 @@ pub enum Commands {
         /// Portfolio rebalancing frequency: 'daily', 'weekly', or 'monthly' (default: daily)
         #[arg(long, default_value = "daily", env = "CDG_REBALANCE_FREQUENCY")]
         rebalance_frequency: String,
+
+        /// Generate line plots and candlestick charts
+        #[arg(long, default_value_t = true, env = "CDG_PLOTS", action = clap::ArgAction::Set)]
+        plots: bool,
+
+        /// Disable plot generation (overrides --plots)
+        #[arg(long)]
+        no_plots: bool,
+
+        /// Enable portfolio optimization (Markowitz Monte Carlo)
+        #[arg(long, default_value_t = true, env = "CDG_OPTIMIZE", action = clap::ArgAction::Set)]
+        optimize: bool,
+
+        /// Disable portfolio optimization (overrides --optimize)
+        #[arg(long)]
+        no_optimize: bool,
     },
     /// Retrieve and backtest strategy on a coin
     Backtest {
@@ -122,6 +138,14 @@ pub enum Commands {
         /// Drop weekends (use 252 annualization) instead of 365 for standalone backtest
         #[arg(long)]
         drop_weekends: bool,
+
+        /// Generate line plots and candlestick charts
+        #[arg(long, default_value_t = true, env = "CDG_PLOTS", action = clap::ArgAction::Set)]
+        plots: bool,
+
+        /// Disable plot generation (overrides --plots)
+        #[arg(long)]
+        no_plots: bool,
     },
     /// Ping CoinGecko and Yahoo Finance API servers
     Ping,
@@ -194,7 +218,13 @@ async fn main() -> Result<()> {
                 fee,
                 slippage,
                 rebalance_frequency,
+                plots,
+                no_plots,
+                optimize,
+                no_optimize,
             }) => {
+                let plots_effective = plots && !no_plots;
+                let optimize_effective = optimize && !no_optimize;
                 pipeline::run_pipeline_flow(pipeline::PipelineConfig {
                     coin: &coin,
                     currency: &currency,
@@ -217,6 +247,8 @@ async fn main() -> Result<()> {
                     rebalance_frequency: &rebalance_frequency,
                     coingecko_base_url: None,
                     yahoo_base_url: None,
+                    plots: plots_effective,
+                    optimize: optimize_effective,
                 })
                 .await?;
             }
@@ -229,7 +261,10 @@ async fn main() -> Result<()> {
                 slippage,
                 rebalance_frequency,
                 drop_weekends,
+                plots,
+                no_plots,
             }) => {
+                let plots_effective = plots && !no_plots;
                 pipeline::run_standalone_backtest(
                     &db_path,
                     &output_dir,
@@ -243,6 +278,7 @@ async fn main() -> Result<()> {
                     slippage,
                     &rebalance_frequency,
                     drop_weekends,
+                    plots_effective,
                 )
                 .await?;
             }
@@ -345,23 +381,20 @@ async fn main() -> Result<()> {
                 let cg_client =
                     api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
                 println!("Checking CoinGecko ID for '{}'...", coin);
+                use api::coingecko::CoinResolution;
                 match cg_client.check_coin_id(&coin).await {
-                    Ok(None) => {
-                        println!("Success: '{}' is a valid CoinGecko ID.", coin);
+                    Ok(CoinResolution::Exact(resolved_id)) => {
+                        println!("Success: '{}' is a valid CoinGecko ID (resolves to '{}').", coin, resolved_id);
                     }
-                    Ok(Some(suggestions)) => {
-                        println!("Error: '{}' is not a valid CoinGecko ID.", coin);
-                        if suggestions.is_empty() {
-                            println!("No suggestions found.");
-                        } else {
-                            println!("\nSuggested IDs:");
-                            for sug in suggestions {
-                                println!(
-                                    "  - {} (symbol: {}, name: {})",
-                                    sug.id, sug.symbol, sug.name
-                                );
-                            }
+                    Ok(CoinResolution::Ambiguous(suggestions)) => {
+                        println!("Warning: '{}' is ambiguous.", coin);
+                        println!("\nSuggested IDs:");
+                        for sug in suggestions {
+                            println!("  - {}", sug);
                         }
+                    }
+                    Ok(CoinResolution::NotFound) => {
+                        println!("Error: '{}' is not a valid CoinGecko ID and no suggestions were found.", coin);
                     }
                     Err(e) => {
                         println!("Error: Failed to query CoinGecko coins list: {}", e);

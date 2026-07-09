@@ -248,6 +248,8 @@ async fn test_pipeline_flow_e2e_normal() {
         rebalance_frequency: "daily",
         coingecko_base_url: Some(&mock_url),
         yahoo_base_url: Some(&mock_url),
+        plots: true,
+        optimize: true,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -301,6 +303,8 @@ async fn test_pipeline_flow_e2e_coin_404() {
         rebalance_frequency: "daily",
         coingecko_base_url: Some(&mock_url),
         yahoo_base_url: Some(&mock_url),
+        plots: true,
+        optimize: true,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -425,6 +429,8 @@ async fn test_pipeline_flow_e2e_missing_tnx() {
         rebalance_frequency: "daily",
         coingecko_base_url: Some(&mock_url),
         yahoo_base_url: Some(&mock_url),
+        plots: true,
+        optimize: true,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -474,6 +480,8 @@ async fn test_pipeline_flow_e2e_cache_hits() {
         rebalance_frequency: "daily",
         coingecko_base_url: Some(&mock_url),
         yahoo_base_url: Some(&mock_url),
+        plots: true,
+        optimize: true,
     };
 
     let config2 = cdg::pipeline::PipelineConfig {
@@ -498,6 +506,8 @@ async fn test_pipeline_flow_e2e_cache_hits() {
         rebalance_frequency: "daily",
         coingecko_base_url: Some(&mock_url),
         yahoo_base_url: Some(&mock_url),
+        plots: true,
+        optimize: true,
     };
 
     // First run
@@ -879,4 +889,159 @@ async fn test_coingecko_retries_on_503() {
         "ping should succeed after 503 retries: {:?}",
         result
     );
+}
+
+#[tokio::test]
+async fn test_pipeline_flow_no_plots() {
+    use wiremock::MockServer;
+
+    let db_path = "tests/test_no_plots.db";
+    let output_dir = "tests/out_no_plots";
+    cleanup_test_files(db_path, output_dir);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    setup_normal_mocks(&mock_server).await;
+
+    let config = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: true,
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+        plots: false,
+        optimize: true,
+    };
+
+    let res = cdg::pipeline::run_pipeline_flow(config).await;
+    assert!(res.is_ok(), "Pipeline flow failed: {:?}", res);
+
+    // Verify output files exist, but NO PNG files exist
+    let mut run_dir_found = false;
+    let paths = std::fs::read_dir(output_dir).expect("Failed to read output_dir");
+    for entry in paths {
+        let entry = entry.expect("Invalid entry");
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name.starts_with("run_") {
+                run_dir_found = true;
+                // Walk the directory and check if any png files exist
+                let mut png_found = false;
+                let sub_paths = std::fs::read_dir(&path).expect("Failed to read run_dir");
+                for sub_entry in sub_paths {
+                    let sub_entry = sub_entry.expect("Invalid sub_entry");
+                    let sub_path = sub_entry.path();
+                    if sub_path.is_file() {
+                        if let Some(ext) = sub_path.extension() {
+                            if ext == "png" {
+                                png_found = true;
+                            }
+                        }
+                    } else if sub_path.is_dir() {
+                        // also check backtests sub-directory if it exists
+                        let backtest_paths = std::fs::read_dir(&sub_path).ok();
+                        if let Some(bp) = backtest_paths {
+                            for b_entry in bp {
+                                if let Ok(be) = b_entry {
+                                    if be.path().extension().map(|e| e == "png").unwrap_or(false) {
+                                        png_found = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    !png_found,
+                    "No PNG file should exist in run directory when plots is disabled"
+                );
+            }
+        }
+    }
+    assert!(run_dir_found, "Run directory should be created");
+
+    cleanup_test_files(db_path, output_dir);
+}
+
+#[tokio::test]
+async fn test_pipeline_flow_no_optimize() {
+    use wiremock::MockServer;
+
+    let db_path = "tests/test_no_optimize.db";
+    let output_dir = "tests/out_no_optimize";
+    cleanup_test_files(db_path, output_dir);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    setup_normal_mocks(&mock_server).await;
+
+    let config = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: false, // skip backtest to focus on optimization
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+        plots: false,
+        optimize: false, // optimization disabled
+    };
+
+    let res = cdg::pipeline::run_pipeline_flow(config).await;
+    assert!(res.is_ok(), "Pipeline flow failed: {:?}", res);
+
+    // Verify portfolio_weights.csv does NOT exist since optimization was skipped
+    let mut run_dir_found = false;
+    let paths = std::fs::read_dir(output_dir).expect("Failed to read output_dir");
+    for entry in paths {
+        let entry = entry.expect("Invalid entry");
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name.starts_with("run_") {
+                run_dir_found = true;
+                let portfolio_weights = path.join("portfolio_weights.csv");
+                assert!(
+                    !portfolio_weights.exists(),
+                    "portfolio_weights.csv should not exist when optimize is disabled"
+                );
+            }
+        }
+    }
+    assert!(run_dir_found, "Run directory should be created");
+
+    cleanup_test_files(db_path, output_dir);
 }

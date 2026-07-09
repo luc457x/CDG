@@ -5,10 +5,10 @@ use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct CoinSuggestion {
-    pub id: String,
-    pub symbol: String,
-    pub name: String,
+pub enum CoinResolution {
+    Exact(String),
+    Ambiguous(Vec<String>),
+    NotFound,
 }
 
 pub struct CoinGeckoClient {
@@ -215,14 +215,36 @@ impl CoinGeckoClient {
         let base_endpoint = format!("{}{}", self.base_url, endpoint);
 
         // Check cache first with 24h TTL
-        if let Some(cached) = self.cache.get(&base_endpoint, COINS_LIST_TTL).await? {
-            return Ok(serde_json::from_str(&cached)?);
-        }
+        let body = if let Some(cached) = self.cache.get(&base_endpoint, COINS_LIST_TTL).await? {
+            cached
+        } else {
+            // Not cached — perform network request (reuse get_request with cache disabled, then store manually)
+            let res = self.get_request(endpoint, &[], false).await?;
+            self.cache.insert(&base_endpoint, &res).await?;
+            res
+        };
 
-        // Not cached — perform network request (reuse get_request with cache disabled, then store manually)
-        let body = self.get_request(endpoint, &[], false).await?;
-        self.cache.insert(&base_endpoint, &body).await?;
-        Ok(serde_json::from_str(&body)?)
+        let mut coins: Vec<Value> = serde_json::from_str(&body)?;
+        for coin in &mut coins {
+            if let Some(obj) = coin.as_object_mut() {
+                if let Some(id) = obj.get_mut("id") {
+                    if let Some(s) = id.as_str() {
+                        *id = Value::String(s.to_lowercase());
+                    }
+                }
+                if let Some(symbol) = obj.get_mut("symbol") {
+                    if let Some(s) = symbol.as_str() {
+                        *symbol = Value::String(s.to_lowercase());
+                    }
+                }
+                if let Some(name) = obj.get_mut("name") {
+                    if let Some(s) = name.as_str() {
+                        *name = Value::String(s.to_lowercase());
+                    }
+                }
+            }
+        }
+        Ok(coins)
     }
 
     pub async fn get_global(&self) -> Result<Value> {
@@ -327,23 +349,17 @@ impl CoinGeckoClient {
         Ok(serde_json::from_str(&res)?)
     }
 
-    pub async fn check_coin_id(&self, input: &str) -> Result<Option<Vec<CoinSuggestion>>> {
+    pub async fn check_coin_id(&self, input: &str) -> Result<CoinResolution> {
         let coin_list = self.get_coins_list().await?;
         let input_lower = input.to_lowercase();
 
         // Check exact ID match
-        let mut exact_id_found = false;
         for coin in &coin_list {
             if let Some(id) = coin.get("id").and_then(|v| v.as_str()) {
-                if id.to_lowercase() == input_lower {
-                    exact_id_found = true;
-                    break;
+                if id == input_lower {
+                    return Ok(CoinResolution::Exact(id.to_string()));
                 }
             }
-        }
-
-        if exact_id_found {
-            return Ok(None);
         }
 
         // Gather suggestions
@@ -351,54 +367,26 @@ impl CoinGeckoClient {
 
         // 1. Exact symbol matches
         for coin in &coin_list {
-            let id = coin
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let symbol = coin
-                .get("symbol")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let name = coin
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let id = coin.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let symbol = coin.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
 
-            if symbol.to_lowercase() == input_lower {
-                suggestions.push(CoinSuggestion { id, symbol, name });
+            if symbol == input_lower {
+                suggestions.push(id.to_string());
             }
         }
 
         // 2. Substring matches
         if suggestions.len() < 10 {
             for coin in &coin_list {
-                let id = coin
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let symbol = coin
-                    .get("symbol")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let name = coin
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let id = coin.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = coin.get("name").and_then(|v| v.as_str()).unwrap_or("");
 
-                if suggestions.iter().any(|s| s.id == id) {
+                if suggestions.contains(&id.to_string()) {
                     continue;
                 }
 
-                if id.to_lowercase().contains(&input_lower)
-                    || name.to_lowercase().contains(&input_lower)
-                {
-                    suggestions.push(CoinSuggestion { id, symbol, name });
+                if id.contains(&input_lower) || name.contains(&input_lower) {
+                    suggestions.push(id.to_string());
                     if suggestions.len() >= 10 {
                         break;
                     }
@@ -406,6 +394,12 @@ impl CoinGeckoClient {
             }
         }
 
-        Ok(Some(suggestions))
+        if suggestions.is_empty() {
+            Ok(CoinResolution::NotFound)
+        } else if suggestions.len() == 1 {
+            Ok(CoinResolution::Exact(suggestions[0].clone()))
+        } else {
+            Ok(CoinResolution::Ambiguous(suggestions))
+        }
     }
 }

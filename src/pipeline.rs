@@ -24,6 +24,8 @@ pub struct PipelineConfig<'a> {
     pub rebalance_frequency: &'a str,
     pub coingecko_base_url: Option<&'a str>,
     pub yahoo_base_url: Option<&'a str>,
+    pub plots: bool,
+    pub optimize: bool,
 }
 
 struct AbortOnDrop {
@@ -483,7 +485,7 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     export::export_parquet(&mut final_df, &parquet_path)?;
 
     // 11. Plotting
-    if !light {
+    if config.plots && !light {
         for col in &currency_cols {
             let returns_cols = [
                 format!("{}_simple_return", col),
@@ -526,7 +528,11 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             ));
         }
     } else {
-        pb.println("Lightweight mode enabled: skipping plot generation.");
+        if !config.plots {
+            pb.println("Skipping plot generation (disabled via --no-plots / CDG_PLOTS=false).");
+        } else {
+            pb.println("Lightweight mode enabled: skipping plot generation.");
+        }
     }
 
     pb.finish_with_message("Data fetching and processing complete.");
@@ -534,60 +540,69 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     // 12. Portfolio Optimization (Markowitz Monte Carlo)
     let mut opt_res_opt = None;
     if currency_cols.len() >= 2 {
-        println!("\n==================================================");
-        println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
-        println!("==================================================");
+        if config.optimize {
+            println!("\n==================================================");
+            println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
+            println!("==================================================");
 
-        let final_ann_factor =
-            annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
+            let final_ann_factor =
+                annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
-        match crate::optimization::run_monte_carlo(
-            &final_df,
-            &currency_cols,
-            final_ann_factor,
-            10000,
-            seed,
-        ) {
-            Ok(opt_res) => {
-                println!("\nOptimal Portfolio Formulations (Annualized):");
-                let metrics_table = crate::optimization::format_portfolio_metrics_table(&opt_res);
-                println!("{}", metrics_table);
+            match crate::optimization::run_monte_carlo(
+                &final_df,
+                &currency_cols,
+                final_ann_factor,
+                10000,
+                seed,
+            ) {
+                Ok(opt_res) => {
+                    println!("\nOptimal Portfolio Formulations (Annualized):");
+                    let metrics_table =
+                        crate::optimization::format_portfolio_metrics_table(&opt_res);
+                    println!("{}", metrics_table);
 
-                println!("\nOptimal Asset Weights:");
-                let weights_table =
-                    crate::optimization::format_optimal_weights_table(&currency_cols, &opt_res);
-                println!("{}", weights_table);
+                    println!("\nOptimal Asset Weights:");
+                    let weights_table =
+                        crate::optimization::format_optimal_weights_table(&currency_cols, &opt_res);
+                    println!("{}", weights_table);
 
-                // Save weights CSV
-                let weights_path = format!("{}/portfolio_weights.csv", run_dir);
-                let mut w_file = std::fs::File::create(&weights_path)?;
-                writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
-                for (i, asset) in currency_cols.iter().enumerate() {
-                    writeln!(
-                        w_file,
-                        "{},{:.6},{:.6}",
-                        asset, opt_res.max_sharpe.weights[i], opt_res.min_volatility.weights[i]
-                    )?;
+                    // Save weights CSV
+                    let weights_path = format!("{}/portfolio_weights.csv", run_dir);
+                    let mut w_file = std::fs::File::create(&weights_path)?;
+                    writeln!(w_file, "asset,max_sharpe_weight,min_vol_weight")?;
+                    for (i, asset) in currency_cols.iter().enumerate() {
+                        writeln!(
+                            w_file,
+                            "{},{:.6},{:.6}",
+                            asset, opt_res.max_sharpe.weights[i], opt_res.min_volatility.weights[i]
+                        )?;
+                    }
+                    println!("Portfolio weights saved to: {}", weights_path);
+
+                    // Plot efficient frontier
+                    if config.plots {
+                        let ef_plot_path = format!("{}/efficient_frontier.png", run_dir);
+                        println!("Saving efficient frontier plot to: {}", ef_plot_path);
+                        if let Err(e) = plot::plot_efficient_frontier(
+                            &opt_res.simulated_points,
+                            &opt_res.max_sharpe,
+                            &opt_res.min_volatility,
+                            &ef_plot_path,
+                        ) {
+                            println!("Warning: Failed to generate efficient frontier plot: {}", e);
+                        }
+                    } else {
+                        println!("Skipping efficient frontier plot (disabled via --no-plots / CDG_PLOTS=false).");
+                    }
+
+                    opt_res_opt = Some(opt_res);
                 }
-                println!("Portfolio weights saved to: {}", weights_path);
-
-                // Plot efficient frontier
-                let ef_plot_path = format!("{}/efficient_frontier.png", run_dir);
-                println!("Saving efficient frontier plot to: {}", ef_plot_path);
-                if let Err(e) = plot::plot_efficient_frontier(
-                    &opt_res.simulated_points,
-                    &opt_res.max_sharpe,
-                    &opt_res.min_volatility,
-                    &ef_plot_path,
-                ) {
-                    println!("Warning: Failed to generate efficient frontier plot: {}", e);
+                Err(e) => {
+                    println!("Error running portfolio optimization: {}", e);
                 }
-
-                opt_res_opt = Some(opt_res);
             }
-            Err(e) => {
-                println!("Error running portfolio optimization: {}", e);
-            }
+        } else {
+            println!("Skipping portfolio optimization (disabled via --no-optimize / CDG_OPTIMIZE=false).");
         }
     } else {
         println!("\nSkipping portfolio optimization (requires at least 2 assets).");
@@ -648,26 +663,29 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                         backtest_metrics.push(metrics);
 
                         // Save PNG plot
-                        let dates: Vec<String> = final_df
-                            .column("date")?
-                            .str()?
-                            .into_iter()
-                            .map(|opt| opt.unwrap_or("").to_string())
-                            .collect();
-                        let plot_path = format!("{}/{}_{}_backtest.png", backtest_dir, col, strat);
-                        let active_dates = dates[dates.len() - equity.len()..].to_vec();
-                        if let Err(e) = plot::plot_backtest_equity(
-                            &active_dates,
-                            &equity,
-                            &bh_equity,
-                            col,
-                            strat,
-                            &plot_path,
-                        ) {
-                            println!(
-                                "Warning: Failed to generate backtest equity plot for {} ({}): {}",
-                                col, strat, e
-                            );
+                        if config.plots {
+                            let dates: Vec<String> = final_df
+                                .column("date")?
+                                .str()?
+                                .into_iter()
+                                .map(|opt| opt.unwrap_or("").to_string())
+                                .collect();
+                            let plot_path =
+                                format!("{}/{}_{}_backtest.png", backtest_dir, col, strat);
+                            let active_dates = dates[dates.len() - equity.len()..].to_vec();
+                            if let Err(e) = plot::plot_backtest_equity(
+                                &active_dates,
+                                &equity,
+                                &bh_equity,
+                                col,
+                                strat,
+                                &plot_path,
+                            ) {
+                                println!(
+                                    "Warning: Failed to generate backtest equity plot for {} ({}): {}",
+                                    col, strat, e
+                                );
+                            }
                         }
                     }
                     Err(e) => {
@@ -714,20 +732,22 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
-                    let plot_path = format!(
-                        "{}/max_sharpe_portfolio_rebalanced_backtest.png",
-                        backtest_dir
-                    );
-                    let active_dates = dates[dates.len() - equity.len()..].to_vec();
-                    if let Err(e) = plot::plot_backtest_equity(
-                        &active_dates,
-                        &equity,
-                        &bh_equity,
-                        "max_sharpe",
-                        "portfolio",
-                        &plot_path,
-                    ) {
-                        println!("Warning: Failed to generate backtest equity plot for max_sharpe portfolio: {}", e);
+                    if config.plots {
+                        let plot_path = format!(
+                            "{}/max_sharpe_portfolio_rebalanced_backtest.png",
+                            backtest_dir
+                        );
+                        let active_dates = dates[dates.len() - equity.len()..].to_vec();
+                        if let Err(e) = plot::plot_backtest_equity(
+                            &active_dates,
+                            &equity,
+                            &bh_equity,
+                            "max_sharpe",
+                            "portfolio",
+                            &plot_path,
+                        ) {
+                            println!("Warning: Failed to generate backtest equity plot for max_sharpe portfolio: {}", e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -750,18 +770,20 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
-                    let plot_path =
-                        format!("{}/min_vol_portfolio_rebalanced_backtest.png", backtest_dir);
-                    let active_dates = dates[dates.len() - equity.len()..].to_vec();
-                    if let Err(e) = plot::plot_backtest_equity(
-                        &active_dates,
-                        &equity,
-                        &bh_equity,
-                        "min_volatility",
-                        "portfolio",
-                        &plot_path,
-                    ) {
-                        println!("Warning: Failed to generate backtest equity plot for min_volatility portfolio: {}", e);
+                    if config.plots {
+                        let plot_path =
+                            format!("{}/min_vol_portfolio_rebalanced_backtest.png", backtest_dir);
+                        let active_dates = dates[dates.len() - equity.len()..].to_vec();
+                        if let Err(e) = plot::plot_backtest_equity(
+                            &active_dates,
+                            &equity,
+                            &bh_equity,
+                            "min_volatility",
+                            "portfolio",
+                            &plot_path,
+                        ) {
+                            println!("Warning: Failed to generate backtest equity plot for min_volatility portfolio: {}", e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -925,6 +947,7 @@ pub async fn run_standalone_backtest(
     slippage: f64,
     _rebalance_frequency: &str,
     drop_weekends: bool,
+    plots: bool,
 ) -> Result<()> {
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
@@ -1083,26 +1106,30 @@ pub async fn run_standalone_backtest(
                     backtest_metrics.push(metrics);
 
                     // Plot equity curve
-                    let dates: Vec<String> = df
-                        .column("date")?
-                        .str()?
-                        .into_iter()
-                        .map(|opt| opt.unwrap_or("").to_string())
-                        .collect();
-                    let plot_path = format!("{}/{}_{}_backtest.png", run_dir, col, strat);
-                    let active_dates = dates[dates.len() - equity.len()..].to_vec();
-                    if let Err(e) = plot::plot_backtest_equity(
-                        &active_dates,
-                        &equity,
-                        &bh_equity,
-                        col,
-                        strat,
-                        &plot_path,
-                    ) {
-                        println!(
-                            "Warning: Failed to generate backtest equity plot for {} ({}): {}",
-                            col, strat, e
-                        );
+                    if plots {
+                        let dates: Vec<String> = df
+                            .column("date")?
+                            .str()?
+                            .into_iter()
+                            .map(|opt| opt.unwrap_or("").to_string())
+                            .collect();
+                        let plot_path = format!("{}/{}_{}_backtest.png", run_dir, col, strat);
+                        let active_dates = dates[dates.len() - equity.len()..].to_vec();
+                        if let Err(e) = plot::plot_backtest_equity(
+                            &active_dates,
+                            &equity,
+                            &bh_equity,
+                            col,
+                            strat,
+                            &plot_path,
+                        ) {
+                            println!(
+                                "Warning: Failed to generate backtest equity plot for {} ({}): {}",
+                                col, strat, e
+                            );
+                        }
+                    } else {
+                        println!("Skipping backtest equity plot for {} ({}) (disabled via --no-plots / CDG_PLOTS=false).", col, strat);
                     }
                 }
                 Err(e) => {

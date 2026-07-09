@@ -64,6 +64,9 @@ Port the python CoinGecko and Yahoo Finance data collector to a robust, modular,
 - **FR21 (Configurable Raw Format)**: The application must support a configurable raw format option `--raw-format` (default: `json`) and environment variable `CDG_RAW_FORMAT`, supporting `json` and `csv`. All raw OHLCV files saved during pipeline runs or standalone OHLCV retrieval must be generated in this format only.
 - **FR22 (Portfolio Backtesting)**: When strategy backtesting is enabled and the portfolio has 2 or more assets, the pipeline must also backtest the optimized `Max Sharpe` and `Min Volatility` portfolios using target weights. Rebalancing return must be simulated and compared against a non-rebalanced Buy & Hold baseline.
 - **FR23 (Interactive Settings Option)**: Replace the "Configure Cache TTL" main menu option with a "Settings" option. Selecting "Settings" prints a warning that interactive selections are not saved to disk, and displays a settings sub-menu containing "Configure Cache TTL" and "Back".
+- **FR24 (Ambiguous Coin Resolution & Caching Optimization)**: Resolve coin IDs using a typed enum (Exact, Ambiguous, NotFound) to handle ambiguous results and optimize performance by lowercasing the list once.
+- **FR25 (Configurable Plotting)**: Allow disabling plots via CLI flags (`--plots`, `--no-plots`) or environment variable `CDG_PLOTS`.
+- **FR26 (Configurable Portfolio Optimization)**: Allow disabling portfolio optimization via CLI flags (`--optimize`, `--no-optimize`) or environment variable `CDG_OPTIMIZE`.
 
 
 ## 5. Business Rules (BR)
