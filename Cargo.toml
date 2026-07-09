@@ -25,7 +25,9 @@ tokio-util = "0.7"
 
 [profile.dev]
 codegen-units = 1
-debug = false
+# debug = 1 enables line-number level debug information in dev builds.
+# Use RUST_BACKTRACE=1 cargo run/test to get full backtraces.
+debug = 1
 
 [profile.release]
 codegen-units = 1
