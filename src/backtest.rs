@@ -1620,21 +1620,16 @@ mod tests {
         ])
         .unwrap();
 
-        let (_, equity, _) = run_backtest_for_asset(
-            &df,
-            "btc_usd",
-            "rsi",
-            None,
-            fee,
-            0.0,
-            365.0,
-            30,
-            &mut None,
-        )
-        .unwrap();
+        let (_, equity, _) =
+            run_backtest_for_asset(&df, "btc_usd", "rsi", None, fee, 0.0, 365.0, 30, &mut None)
+                .unwrap();
 
         // equity[0] = 10000 (start)
-        assert!((equity[0] - 10000.0).abs() < 1e-6, "equity[0]={}", equity[0]);
+        assert!(
+            (equity[0] - 10000.0).abs() < 1e-6,
+            "equity[0]={}",
+            equity[0]
+        );
         // equity[1]: prev_pos=0, r_strat=r_t*conf*0=0, then fee on transition 0→1
         let expected_eq1 = 10000.0 * (1.0 - fee);
         assert!(
@@ -1675,24 +1670,18 @@ mod tests {
             Series::new("btc_usd_macd_line", vec![1.0f64, 1.0, 1.0, 1.0]),
             Series::new("btc_usd_macd_signal", vec![1.0f64, 1.0, 1.0, 1.0]),
             Series::new("btc_usd_macd_histogram", vec![0.0f64, 0.0, 0.0, 0.0]),
-            Series::new("btc_usd_bollinger_upper", vec![120.0f64, 120.0, 140.0, 150.0]),
+            Series::new(
+                "btc_usd_bollinger_upper",
+                vec![120.0f64, 120.0, 140.0, 150.0],
+            ),
             Series::new("btc_usd_bollinger_lower", vec![80.0f64, 80.0, 100.0, 110.0]),
             Series::new("btc_usd_sma_20", vec![100.0f64, 100.0, 120.0, 130.0]),
         ])
         .unwrap();
 
-        let (metrics, equity, _) = run_backtest_for_asset(
-            &df,
-            "btc_usd",
-            "rsi",
-            None,
-            0.01,
-            0.0,
-            365.0,
-            30,
-            &mut None,
-        )
-        .unwrap();
+        let (metrics, equity, _) =
+            run_backtest_for_asset(&df, "btc_usd", "rsi", None, 0.01, 0.0, 365.0, 30, &mut None)
+                .unwrap();
         // Only 1 trade: neutral→long transition at bar 1
         assert_eq!(metrics.total_trades, 1, "trades={}", metrics.total_trades);
         // equity should be growing from bar 1 onward (long riding 10% gains)
@@ -1748,34 +1737,17 @@ mod tests {
 
     fn make_rsi_df(prices: &[f64], rsi_vals: &[f64]) -> DataFrame {
         let n = prices.len();
-        let dates: Vec<String> = (0..n)
-            .map(|i| format!("2026-01-{:02}", i + 1))
-            .collect();
+        let dates: Vec<String> = (0..n).map(|i| format!("2026-01-{:02}", i + 1)).collect();
         let date_refs: Vec<&str> = dates.iter().map(|s| s.as_str()).collect();
         DataFrame::new(vec![
             Series::new("date", date_refs),
             Series::new("asset_usd", prices.to_vec()),
             Series::new("asset_usd_rsi_14", rsi_vals.to_vec()),
-            Series::new(
-                "asset_usd_macd_line",
-                vec![1.0f64; n],
-            ),
-            Series::new(
-                "asset_usd_macd_signal",
-                vec![1.0f64; n],
-            ),
-            Series::new(
-                "asset_usd_macd_histogram",
-                vec![0.0f64; n],
-            ),
-            Series::new(
-                "asset_usd_bollinger_upper",
-                vec![1000.0f64; n],
-            ),
-            Series::new(
-                "asset_usd_bollinger_lower",
-                vec![0.0f64; n],
-            ),
+            Series::new("asset_usd_macd_line", vec![1.0f64; n]),
+            Series::new("asset_usd_macd_signal", vec![1.0f64; n]),
+            Series::new("asset_usd_macd_histogram", vec![0.0f64; n]),
+            Series::new("asset_usd_bollinger_upper", vec![1000.0f64; n]),
+            Series::new("asset_usd_bollinger_lower", vec![0.0f64; n]),
             Series::new("asset_usd_sma_20", vec![500.0f64; n]),
         ])
         .unwrap()
@@ -1788,9 +1760,18 @@ mod tests {
         let prices = vec![100.0, 110.0, 121.0];
         let rsi = vec![50.0, 50.0, 50.0];
         let df = make_rsi_df(&prices, &rsi);
-        let (_, equity, _) =
-            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None)
-                .unwrap();
+        let (_, equity, _) = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "rsi",
+            None,
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
         // all neutral → strategy_returns=0 → equity stays at 10000
         for &eq in &equity {
             assert!(
@@ -1814,12 +1795,25 @@ mod tests {
         let prices = vec![100.0, 110.0, 121.0];
         let rsi = vec![20.0, 50.0, 50.0]; // bar0: buy; bar1: hold; bar2: hold
         let df = make_rsi_df(&prices, &rsi);
-        let (_, equity, _) =
-            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None)
-                .unwrap();
+        let (_, equity, _) = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "rsi",
+            None,
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
         assert!((equity[0] - 10000.0).abs() < 1e-6);
         // t=1: prev_pos=0 → no return, transition to long
-        assert!((equity[1] - 10000.0).abs() < 1e-6, "equity[1]={}", equity[1]);
+        assert!(
+            (equity[1] - 10000.0).abs() < 1e-6,
+            "equity[1]={}",
+            equity[1]
+        );
         // t=2: long, r=(121-110)/110
         let r2 = (121.0 - 110.0) / 110.0;
         let expected_eq2 = 10000.0 * (1.0 + r2);
@@ -1846,8 +1840,17 @@ mod tests {
             Series::new("asset_usd_sma_20", vec![100.0f64]),
         ])
         .unwrap();
-        let result =
-            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None);
+        let result = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "rsi",
+            None,
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        );
         assert!(result.is_err(), "single-bar df should return Err");
     }
 
@@ -1936,7 +1939,10 @@ mod tests {
         // bar 0: prev_pos=0, sig=long. r_strat=r*0=0. equity[1]=10000
         // bar 1: prev_pos=1, price[1]=250. r_t=(210-200)/200=0.05. equity[2]=10000*1.05=10500
         // bar 2: prev_pos=1, price[2]=220. r_t=(220-210)/210. equity[3]=10500*(1+r)
-        assert!(equity[2] > equity[1], "long position should profit when price rises");
+        assert!(
+            equity[2] > equity[1],
+            "long position should profit when price rises"
+        );
         assert_eq!(metrics.total_trades, 1); // one transition: neutral→long
     }
 
@@ -1995,9 +2001,18 @@ mod tests {
             // no indicator columns present → strategy must fall back to neutral
         ])
         .unwrap();
-        let (_, equity, _) =
-            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None)
-                .unwrap();
+        let (_, equity, _) = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "rsi",
+            None,
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
         // prev_pos stays 0 → r_strat=0 → equity flat
         for &eq in &equity {
             assert!((eq - 10000.0).abs() < 1e-6, "eq={}", eq);
@@ -2022,10 +2037,7 @@ mod tests {
             ),
             Series::new("btc", vec![100.0f64, 150.0, 200.0, 250.0, 300.0]),
             // returns as percentage (used by backtest_portfolio * /100)
-            Series::new(
-                "btc_simple_return",
-                vec![0.0f64, 50.0, 33.33, 25.0, 20.0],
-            ),
+            Series::new("btc_simple_return", vec![0.0f64, 50.0, 33.33, 25.0, 20.0]),
             Series::new("eth", vec![100.0f64, 80.0, 60.0, 50.0, 40.0]),
             Series::new(
                 "eth_simple_return",
@@ -2062,10 +2074,7 @@ mod tests {
         // btc goes 2x, eth flat → without rebalance btc dominates
         // with daily rebalance, we force back to 0.5/0.5 each day
         let df = DataFrame::new(vec![
-            Series::new(
-                "date",
-                vec!["2026-01-01", "2026-01-02", "2026-01-03"],
-            ),
+            Series::new("date", vec!["2026-01-01", "2026-01-02", "2026-01-03"]),
             Series::new("btc", vec![100.0f64, 200.0, 200.0]),
             Series::new("btc_simple_return", vec![0.0f64, 100.0, 0.0]),
             Series::new("eth", vec![100.0f64, 100.0, 100.0]),
@@ -2106,10 +2115,8 @@ mod tests {
     /// Portfolio: zero assets returns Err
     #[test]
     fn test_portfolio_empty_assets_errors() {
-        let df = DataFrame::new(vec![
-            Series::new("date", vec!["2026-01-01", "2026-01-02"]),
-        ])
-        .unwrap();
+        let df =
+            DataFrame::new(vec![Series::new("date", vec!["2026-01-01", "2026-01-02"])]).unwrap();
         let result = backtest_portfolio(&df, &[], &[], "test", 365.0, 30, 0.0, 0.0, "daily");
         assert!(result.is_err());
     }

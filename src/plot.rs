@@ -424,10 +424,18 @@ pub fn plot_backtest_equity(
     for i in 0..n_rows {
         let val_s = strategy_equity[i];
         let val_bh = bh_equity[i];
-        if val_s < y_min { y_min = val_s; }
-        if val_s > y_max { y_max = val_s; }
-        if val_bh < y_min { y_min = val_bh; }
-        if val_bh > y_max { y_max = val_bh; }
+        if val_s < y_min {
+            y_min = val_s;
+        }
+        if val_s > y_max {
+            y_max = val_s;
+        }
+        if val_bh < y_min {
+            y_min = val_bh;
+        }
+        if val_bh > y_max {
+            y_max = val_bh;
+        }
     }
 
     let padding = if y_max != y_min {
@@ -441,7 +449,11 @@ pub fn plot_backtest_equity(
     let root = BitMapBackend::new(output_path, (1024, 768)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    let title = format!("Backtest Equity Curve: {} ({})", coin_name.to_uppercase(), strategy_name.to_uppercase());
+    let title = format!(
+        "Backtest Equity Curve: {} ({})",
+        coin_name.to_uppercase(),
+        strategy_name.to_uppercase()
+    );
 
     let mut chart = ChartBuilder::on(&root)
         .caption(title, ("sans-serif", 30).into_font())
@@ -467,7 +479,10 @@ pub fn plot_backtest_equity(
     let strat_color = RED;
     chart
         .draw_series(LineSeries::new(
-            strategy_equity.iter().enumerate().map(|(idx, &val)| (idx, val)),
+            strategy_equity
+                .iter()
+                .enumerate()
+                .map(|(idx, &val)| (idx, val)),
             strat_color,
         ))?
         .label("Strategy Equity")
@@ -491,4 +506,3 @@ pub fn plot_backtest_equity(
 
     Ok(())
 }
-

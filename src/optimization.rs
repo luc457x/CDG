@@ -222,7 +222,11 @@ pub fn run_monte_carlo(
             }
             let p_vol = p_var.sqrt();
 
-            let sharpe = if p_vol > 0.0 { (p_ret - r_f_annual) / p_vol } else { 0.0 };
+            let sharpe = if p_vol > 0.0 {
+                (p_ret - r_f_annual) / p_vol
+            } else {
+                0.0
+            };
 
             // Convert return and vol to percentages for plotting & UI
             let ann_ret_pct = p_ret * 100.0;

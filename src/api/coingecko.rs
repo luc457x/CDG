@@ -142,7 +142,11 @@ impl CoinGeckoClient {
 
             // Validate response body parses as JSON before storing in cache
             if let Err(e) = serde_json::from_str::<serde_json::Value>(&body) {
-                return Err(anyhow::anyhow!("Invalid JSON response from CoinGecko: {}, body: {}", e, body));
+                return Err(anyhow::anyhow!(
+                    "Invalid JSON response from CoinGecko: {}, body: {}",
+                    e,
+                    body
+                ));
             }
 
             if use_cache {

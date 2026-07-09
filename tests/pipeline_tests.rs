@@ -143,7 +143,10 @@ fn test_align_datasets_volume_filling() {
 #[test]
 fn test_covariance_date_alignment() {
     let df = DataFrame::new(vec![
-        Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+        Series::new(
+            "date",
+            vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"],
+        ),
         Series::new("asset_a", vec![100.0, 0.0, 102.0, 104.0]),
         Series::new("asset_b", vec![10.0, 12.0, 15.0, 20.0]),
     ])
@@ -157,23 +160,53 @@ fn test_covariance_date_alignment() {
 #[test]
 fn test_backtest_with_risk_free_rate() {
     let df = DataFrame::new(vec![
-        Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"]),
+        Series::new(
+            "date",
+            vec![
+                "2026-06-01",
+                "2026-06-02",
+                "2026-06-03",
+                "2026-06-04",
+                "2026-06-05",
+            ],
+        ),
         Series::new("asset_close", vec![100.0, 101.0, 102.0, 103.0, 104.0]),
-        Series::new("asset_rsi_14", vec![Some(20.0), Some(20.0), Some(80.0), Some(80.0), Some(50.0)]),
+        Series::new(
+            "asset_rsi_14",
+            vec![Some(20.0), Some(20.0), Some(80.0), Some(80.0), Some(50.0)],
+        ),
         Series::new("^TNX", vec![5.0, 5.0, 5.0, 5.0, 5.0]), // 5% risk-free rate
     ])
     .unwrap();
 
-    let (res_rf, _, _) = cdg::backtest::run_backtest_for_asset(&df, "asset", "rsi", None, 0.0, 0.0, 252.0, 30, &mut None).unwrap();
+    let (res_rf, _, _) = cdg::backtest::run_backtest_for_asset(
+        &df, "asset", "rsi", None, 0.0, 0.0, 252.0, 30, &mut None,
+    )
+    .unwrap();
 
     let df_no_rf = DataFrame::new(vec![
-        Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"]),
+        Series::new(
+            "date",
+            vec![
+                "2026-06-01",
+                "2026-06-02",
+                "2026-06-03",
+                "2026-06-04",
+                "2026-06-05",
+            ],
+        ),
         Series::new("asset_close", vec![100.0, 101.0, 102.0, 103.0, 104.0]),
-        Series::new("asset_rsi_14", vec![Some(20.0), Some(20.0), Some(80.0), Some(80.0), Some(50.0)]),
+        Series::new(
+            "asset_rsi_14",
+            vec![Some(20.0), Some(20.0), Some(80.0), Some(80.0), Some(50.0)],
+        ),
     ])
     .unwrap();
 
-    let (res_no_rf, _, _) = cdg::backtest::run_backtest_for_asset(&df_no_rf, "asset", "rsi", None, 0.0, 0.0, 252.0, 30, &mut None).unwrap();
+    let (res_no_rf, _, _) = cdg::backtest::run_backtest_for_asset(
+        &df_no_rf, "asset", "rsi", None, 0.0, 0.0, 252.0, 30, &mut None,
+    )
+    .unwrap();
 
     // The Sharpe ratio with 5% risk free rate should be lower than with 0% risk free rate
     assert!(res_rf.strategy_sharpe < res_no_rf.strategy_sharpe);
