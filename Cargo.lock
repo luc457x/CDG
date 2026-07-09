@@ -334,6 +334,7 @@ dependencies = [
  "clap",
  "cli-table",
  "dialoguer",
+ "futures",
  "indicatif",
  "plotters",
  "polars",
