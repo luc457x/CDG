@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADRs)
 
-ADRs live in `.agents/adr/` with sequential numbering: `0001-slug.md`, `0002-slug.md`, etc.
+ADRs live in `.agents/docs/ADRs/` with sequential numbering: `0001-slug.md`, `0002-slug.md`, etc.
 
 ## Template
 

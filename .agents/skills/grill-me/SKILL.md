@@ -29,7 +29,7 @@ During codebase exploration, review project docs in `.agents/`:
 
 - `.agents/SPEC.md` — specifications, business rules, tech stack
 - `.agents/BACKLOG.md` — ideas and unvalidated features
-- `.agents/adr/` — architecture decision records (optional)
+- `.agents/docs/ADRs/` — architecture decision records (optional)
 
 ### Challenge Against SPEC.md
 
@@ -53,7 +53,7 @@ When business rule, requirement, or scope boundary resolved during interview, up
 
 ## ADRs
 
-Only offer to create ADR in `.agents/adr/` when all three are true:
+Only offer to create ADR in `.agents/docs/ADRs/` when all three are true:
 
 1. **Hard to reverse** — cost of changing mind later is meaningful
 2. **Surprising without context** — future reader will wonder "why did they do it this way?"

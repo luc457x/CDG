@@ -11,8 +11,9 @@ trigger: always_on
 - **PROGRESS.md**: Session log (current)
 - **PROGRESS_ARCHIVE.md**: Archived sessions
 - **UBIQUITOUS_LANGUAGE.md** (Optional): Glossary
-- **adr/**: ADR records
-- **etc/**: Reference docs, migration plans, analysis artifacts
+- **docs/ADRs/**: Architecture Decision Records
+- **docs/**: General documentation artifacts
+- **plans/**: Execution plans (alpha, beta, etc.)
 - **rules/**: Trigger-based rule files
 - **skills/**: Executable skill protocols
-- **personas/**: Persona definitions
+- **agents/**: Agent persona definitions
