@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct BacktestMetrics {
@@ -901,6 +902,173 @@ pub fn format_backtest_table(metrics: &[BacktestMetrics]) -> String {
         Ok(d) => d.to_string(),
         Err(_) => "Error generating table".to_string(),
     }
+}
+
+/// Write CSV + JSON report for a completed backtest run.
+/// Warns on key collision and returns Err on JSON write failure.
+pub fn generate_backtest_report(metrics: &[BacktestMetrics], run_dir: &Path) -> Result<()> {
+    if metrics.is_empty() {
+        return Ok(());
+    }
+
+    // CSV
+    let csv_path = run_dir.join("backtest_report.csv");
+    let mut file = std::fs::File::create(&csv_path)?;
+    use std::io::Write;
+    writeln!(
+        file,
+        "coin,currency,strategy,strategy_return,buy_and_hold_return,strategy_sharpe,\
+buy_and_hold_sharpe,strategy_max_drawdown,buy_and_hold_max_drawdown,win_rate,trades,rating"
+    )?;
+    for m in metrics {
+        writeln!(
+            file,
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{}",
+            m.coin,
+            m.currency,
+            m.strategy,
+            m.strategy_return,
+            m.buy_and_hold_return,
+            m.strategy_sharpe,
+            m.buy_and_hold_sharpe,
+            m.strategy_max_drawdown,
+            m.buy_and_hold_max_drawdown,
+            m.active_win_rate,
+            m.total_trades,
+            m.strategy_rating
+        )?;
+    }
+    println!("Backtest CSV report saved to: {}", csv_path.display());
+
+    // JSON — warn on key collision, error on write failure
+    let json_path = run_dir.join("backtest_report.json");
+    let mut report_map = HashMap::new();
+    for m in metrics {
+        let key = format!("{}_{}", m.coin, m.strategy);
+        if report_map.contains_key(&key) {
+            eprintln!(
+                "Warning: backtest report key collision for '{}'; overwriting.",
+                key
+            );
+        }
+        report_map.insert(key, m.clone());
+    }
+    let report = BacktestReport {
+        timestamp: chrono::Local::now().to_rfc3339(),
+        metrics: report_map,
+    };
+    let json_str = serde_json::to_string_pretty(&report)?;
+    std::fs::write(&json_path, json_str)?;
+    println!("Backtest JSON report saved to: {}", json_path.display());
+
+    Ok(())
+}
+
+/// Compute US 10Y treasury benchmark return from ^TNX column and push into metrics vec.
+/// `col` is the price column name used to locate the backtest start index.
+/// `ann_factor` is the annualization factor (252 or 365).
+pub fn append_treasury_benchmark(
+    df: &DataFrame,
+    col: &str,
+    days: usize,
+    ann_factor: f64,
+    metrics: &mut Vec<BacktestMetrics>,
+) -> Result<()> {
+    if df.column("^TNX").is_err() {
+        return Ok(());
+    }
+    let n_rows = df.height();
+    let close_col = if df.column(&format!("{}_close", col)).is_ok() {
+        format!("{}_close", col)
+    } else {
+        col.to_string()
+    };
+    let prices: Vec<Option<f64>> = df.column(&close_col)?.f64()?.into_iter().collect();
+
+    let rsi: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_rsi_14", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+    let macd_line: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_macd_line", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+    let macd_signal: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_macd_signal", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+    let macd_hist: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_macd_histogram", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+    let bb_upper: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_bollinger_upper", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+    let bb_lower: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_bollinger_lower", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+    let bb_mid: Option<Vec<Option<f64>>> = df
+        .column(&format!("{}_sma_20", col))
+        .ok()
+        .map(|c| c.f64().unwrap().into_iter().collect());
+
+    let mut first_valid_idx = 0;
+    for i in 0..n_rows {
+        let price_ok = prices[i].is_some();
+        let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+        let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+        let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
+            && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
+
+        if price_ok && rsi_ok && macd_ok && bb_ok {
+            first_valid_idx = i;
+            break;
+        }
+    }
+    let start_idx = if n_rows > days {
+        (n_rows - 1 - days).max(first_valid_idx)
+    } else {
+        first_valid_idx
+    };
+
+    let tnx_col: Vec<Option<f64>> = df.column("^TNX")?.f64()?.into_iter().collect();
+    let mut cum_yield = 1.0f64;
+    for i in (start_idx + 1)..n_rows {
+        if let Some(y) = tnx_col[i] {
+            let daily_y = (y / 100.0) / ann_factor;
+            cum_yield *= 1.0 + daily_y;
+        }
+    }
+    let final_treasury_return = (cum_yield - 1.0) * 100.0;
+
+    metrics.push(BacktestMetrics {
+        coin: "US_TREASURY".to_string(),
+        currency: "10Y".to_string(),
+        strategy: "B&H".to_string(),
+        strategy_return: final_treasury_return,
+        buy_and_hold_return: final_treasury_return,
+        strategy_sharpe: 0.0,
+        buy_and_hold_sharpe: 0.0,
+        strategy_max_drawdown: 0.0,
+        buy_and_hold_max_drawdown: 0.0,
+        prediction_accuracy: 0.0,
+        prediction_r2: 0.0,
+        active_win_rate: 0.0,
+        prediction_rating: "n/a".to_string(),
+        strategy_rating: "good".to_string(),
+        true_positives: 0,
+        false_positives: 0,
+        true_negatives: 0,
+        false_negatives: 0,
+        total_trades: 0,
+    });
+
+    Ok(())
 }
 
 pub fn backtest_portfolio(

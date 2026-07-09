@@ -118,6 +118,10 @@ pub enum Commands {
         /// Portfolio rebalancing frequency: 'daily', 'weekly', or 'monthly' (default: daily)
         #[arg(long, default_value = "daily", env = "CDG_REBALANCE_FREQUENCY")]
         rebalance_frequency: String,
+
+        /// Drop weekends (use 252 annualization) instead of 365 for standalone backtest
+        #[arg(long)]
+        drop_weekends: bool,
     },
     /// Ping CoinGecko and Yahoo Finance API servers
     Ping,
@@ -224,6 +228,7 @@ async fn main() -> Result<()> {
                 fee,
                 slippage,
                 rebalance_frequency,
+                drop_weekends,
             }) => {
                 pipeline::run_standalone_backtest(
                     &db_path,
@@ -237,6 +242,7 @@ async fn main() -> Result<()> {
                     fee,
                     slippage,
                     &rebalance_frequency,
+                    drop_weekends,
                 )
                 .await?;
             }

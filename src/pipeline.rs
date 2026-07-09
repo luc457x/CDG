@@ -678,112 +678,19 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         }
 
         // 2. US Treasury 10Y Benchmark Calculation
-        if final_df.column("^TNX").is_ok() {
-            let n_rows = final_df.height();
-            let mut start_idx = 0;
-            if !currency_cols.is_empty() {
-                let coin = &currency_cols[0];
-                let close_col = if final_df.column(&format!("{}_close", coin)).is_ok() {
-                    format!("{}_close", coin)
-                } else {
-                    coin.to_string()
-                };
-                let prices: Vec<Option<f64>> =
-                    final_df.column(&close_col)?.f64()?.into_iter().collect();
-                let rsi_col = format!("{}_rsi_14", coin);
-                let rsi: Option<Vec<Option<f64>>> = final_df
-                    .column(&rsi_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-                let macd_line_col = format!("{}_macd_line", coin);
-                let macd_line: Option<Vec<Option<f64>>> = final_df
-                    .column(&macd_line_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-                let macd_signal_col = format!("{}_macd_signal", coin);
-                let macd_signal: Option<Vec<Option<f64>>> = final_df
-                    .column(&macd_signal_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-                let macd_hist_col = format!("{}_macd_histogram", coin);
-                let macd_hist: Option<Vec<Option<f64>>> = final_df
-                    .column(&macd_hist_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-                let bb_upper_col = format!("{}_bollinger_upper", coin);
-                let bb_upper: Option<Vec<Option<f64>>> = final_df
-                    .column(&bb_upper_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-                let bb_lower_col = format!("{}_bollinger_lower", coin);
-                let bb_lower: Option<Vec<Option<f64>>> = final_df
-                    .column(&bb_lower_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-                let bb_mid_col = format!("{}_sma_20", coin);
-                let bb_mid: Option<Vec<Option<f64>>> = final_df
-                    .column(&bb_mid_col)
-                    .ok()
-                    .map(|c| c.f64().unwrap().into_iter().collect());
-
-                let mut first_valid_idx = 0;
-                for i in 0..n_rows {
-                    let price_ok = prices[i].is_some();
-                    let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-                    let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                        && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                        && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-                    let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                        && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                        && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-
-                    if price_ok && rsi_ok && macd_ok && bb_ok {
-                        first_valid_idx = i;
-                        break;
-                    }
-                }
-                start_idx = if n_rows > days as usize {
-                    (n_rows - 1 - days as usize).max(first_valid_idx)
-                } else {
-                    first_valid_idx
-                };
+        if !currency_cols.is_empty() {
+            if let Err(e) = backtest::append_treasury_benchmark(
+                &final_df,
+                &currency_cols[0],
+                days as usize,
+                final_ann_factor,
+                &mut backtest_metrics,
+            ) {
+                println!("Warning: Treasury benchmark failed: {}", e);
             }
-
-            let tnx_col: Vec<Option<f64>> = final_df.column("^TNX")?.f64()?.into_iter().collect();
-            let mut cum_yield = 1.0;
-            for i in (start_idx + 1)..n_rows {
-                if let Some(y) = tnx_col[i] {
-                    let daily_y = (y / 100.0) / final_ann_factor;
-                    cum_yield *= 1.0 + daily_y;
-                }
-            }
-
-            let final_treasury_return = (cum_yield - 1.0) * 100.0;
-            let treasury_metrics = backtest::BacktestMetrics {
-                coin: "US_TREASURY".to_string(),
-                currency: "10Y".to_string(),
-                strategy: "B&H".to_string(),
-                strategy_return: final_treasury_return,
-                buy_and_hold_return: final_treasury_return,
-                strategy_sharpe: 0.0,
-                buy_and_hold_sharpe: 0.0,
-                strategy_max_drawdown: 0.0,
-                buy_and_hold_max_drawdown: 0.0,
-                prediction_accuracy: 0.0,
-                prediction_r2: 0.0,
-                active_win_rate: 0.0,
-                prediction_rating: "n/a".to_string(),
-                strategy_rating: "good".to_string(),
-                true_positives: 0,
-                false_positives: 0,
-                true_negatives: 0,
-                false_negatives: 0,
-                total_trades: 0,
-            };
-            backtest_metrics.push(treasury_metrics);
         }
 
-        // 2. Backtest optimized portfolios if available
+        // 3. Backtest optimized portfolios if available
         if let Some(ref opt_res) = opt_res_opt {
             let dates: Vec<String> = final_df
                 .column("date")?
@@ -866,58 +773,17 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             }
         }
 
-        // 3. Print consolidated table and save reports
+        // 4. Print consolidated table and save reports
         if !backtest_metrics.is_empty() {
             let backtest_table = backtest::format_backtest_table(&backtest_metrics);
             println!("\nBacktest Summary Results:");
             println!("{}", backtest_table);
 
-            // Export to CSV
-            let csv_report_path = format!("{}/backtest_report.csv", backtest_dir);
-            if let Ok(mut file) = std::fs::File::create(&csv_report_path) {
-                if let Err(e) = writeln!(
-                    file,
-                    "coin,currency,strategy,strategy_return,buy_and_hold_return,strategy_sharpe,buy_and_hold_sharpe,strategy_max_drawdown,buy_and_hold_max_drawdown,win_rate,trades,rating"
-                ) {
-                    println!("Warning: Failed to write backtest CSV header: {}", e);
-                }
-                for m in &backtest_metrics {
-                    if let Err(e) = writeln!(
-                        file,
-                        "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{}",
-                        m.coin,
-                        m.currency,
-                        m.strategy,
-                        m.strategy_return,
-                        m.buy_and_hold_return,
-                        m.strategy_sharpe,
-                        m.buy_and_hold_sharpe,
-                        m.strategy_max_drawdown,
-                        m.buy_and_hold_max_drawdown,
-                        m.active_win_rate,
-                        m.total_trades,
-                        m.strategy_rating
-                    ) {
-                        println!("Warning: Failed to write backtest CSV row: {}", e);
-                    }
-                }
-                println!("Backtest CSV report saved to: {}", csv_report_path);
-            }
-
-            // Export to JSON
-            let json_report_path = format!("{}/backtest_report.json", backtest_dir);
-            let mut report_map = std::collections::HashMap::new();
-            for m in &backtest_metrics {
-                report_map.insert(format!("{}_{}", m.coin, m.strategy), m.clone());
-            }
-            let report = backtest::BacktestReport {
-                timestamp: chrono::Local::now().to_rfc3339(),
-                metrics: report_map,
-            };
-            if let Ok(json_str) = serde_json::to_string_pretty(&report) {
-                if std::fs::write(&json_report_path, json_str).is_ok() {
-                    println!("Backtest JSON report saved to: {}", json_report_path);
-                }
+            if let Err(e) = backtest::generate_backtest_report(
+                &backtest_metrics,
+                std::path::Path::new(&backtest_dir),
+            ) {
+                println!("Warning: Failed to save backtest report: {}", e);
             }
         }
     }
@@ -1058,6 +924,7 @@ pub async fn run_standalone_backtest(
     fee: f64,
     slippage: f64,
     _rebalance_frequency: &str,
+    drop_weekends: bool,
 ) -> Result<()> {
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
@@ -1077,6 +944,9 @@ pub async fn run_standalone_backtest(
     println!("Strategy: {}", strategy);
     println!("Fee: {}", fee);
     println!("Slippage: {}", slippage);
+    println!("Drop Weekends: {}", drop_weekends);
+
+    let ann_factor = if drop_weekends { 252.0 } else { 365.0 };
 
     // 1. Initialize Cache
     let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
@@ -1197,7 +1067,7 @@ pub async fn run_standalone_backtest(
             if cancel_token.is_cancelled() {
                 return Err(anyhow!("Operation cancelled"));
             }
-            // Standalone run uses default annualization 365.0
+            // Standalone run uses ann_factor derived from drop_weekends
             match backtest::run_backtest_for_asset(
                 df,
                 col,
@@ -1205,7 +1075,7 @@ pub async fn run_standalone_backtest(
                 custom_cfg.as_ref(),
                 fee,
                 slippage,
-                365.0,
+                ann_factor,
                 days as usize,
                 &mut bh_cache,
             ) {
@@ -1241,100 +1111,15 @@ pub async fn run_standalone_backtest(
             }
         }
 
-        // Add US Treasury benchmark row if ^TNX is present
-        if df.column("^TNX").is_ok() {
-            let n_rows = df.height();
-            let mut start_idx = 0;
-            let close_col = if df.column(&format!("{}_close", col)).is_ok() {
-                format!("{}_close", col)
-            } else {
-                col.to_string()
-            };
-            let prices: Vec<Option<f64>> = df.column(&close_col)?.f64()?.into_iter().collect();
-            let rsi_col = format!("{}_rsi_14", col);
-            let rsi: Option<Vec<Option<f64>>> = df
-                .column(&rsi_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-            let macd_line_col = format!("{}_macd_line", col);
-            let macd_line: Option<Vec<Option<f64>>> = df
-                .column(&macd_line_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-            let macd_signal_col = format!("{}_macd_signal", col);
-            let macd_signal: Option<Vec<Option<f64>>> = df
-                .column(&macd_signal_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-            let macd_hist_col = format!("{}_macd_histogram", col);
-            let macd_hist: Option<Vec<Option<f64>>> = df
-                .column(&macd_hist_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-            let bb_upper_col = format!("{}_bollinger_upper", col);
-            let bb_upper: Option<Vec<Option<f64>>> = df
-                .column(&bb_upper_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-            let bb_lower_col = format!("{}_bollinger_lower", col);
-            let bb_lower: Option<Vec<Option<f64>>> = df
-                .column(&bb_lower_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-            let bb_mid_col = format!("{}_sma_20", col);
-            let bb_mid: Option<Vec<Option<f64>>> = df
-                .column(&bb_mid_col)
-                .ok()
-                .map(|c| c.f64().unwrap().into_iter().collect());
-
-            for i in 0..n_rows {
-                let price_ok = prices[i].is_some();
-                let rsi_ok = rsi.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-                let macd_ok = macd_line.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                    && macd_signal.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                    && macd_hist.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-                let bb_ok = bb_upper.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                    && bb_lower.as_ref().map(|v| v[i].is_some()).unwrap_or(true)
-                    && bb_mid.as_ref().map(|v| v[i].is_some()).unwrap_or(true);
-
-                if price_ok && rsi_ok && macd_ok && bb_ok {
-                    start_idx = i;
-                    break;
-                }
-            }
-
-            let tnx_col: Vec<Option<f64>> = df.column("^TNX")?.f64()?.into_iter().collect();
-            let mut cum_yield = 1.0;
-            for i in (start_idx + 1)..n_rows {
-                if let Some(y) = tnx_col[i] {
-                    let daily_y = (y / 100.0) / 365.0;
-                    cum_yield *= 1.0 + daily_y;
-                }
-            }
-
-            let final_treasury_return = (cum_yield - 1.0) * 100.0;
-            let treasury_metrics = backtest::BacktestMetrics {
-                coin: format!("{}_US_TREASURY", col.to_uppercase()),
-                currency: "10Y".to_string(),
-                strategy: "B&H".to_string(),
-                strategy_return: final_treasury_return,
-                buy_and_hold_return: final_treasury_return,
-                strategy_sharpe: 0.0,
-                buy_and_hold_sharpe: 0.0,
-                strategy_max_drawdown: 0.0,
-                buy_and_hold_max_drawdown: 0.0,
-                prediction_accuracy: 0.0,
-                prediction_r2: 0.0,
-                active_win_rate: 0.0,
-                prediction_rating: "n/a".to_string(),
-                strategy_rating: "good".to_string(),
-                true_positives: 0,
-                false_positives: 0,
-                true_negatives: 0,
-                false_negatives: 0,
-                total_trades: 0,
-            };
-            backtest_metrics.push(treasury_metrics);
+        // Add US Treasury benchmark row
+        if let Err(e) = backtest::append_treasury_benchmark(
+            df,
+            col,
+            days as usize,
+            ann_factor,
+            &mut backtest_metrics,
+        ) {
+            println!("Warning: Treasury benchmark failed: {}", e);
         }
     }
 
@@ -1343,46 +1128,10 @@ pub async fn run_standalone_backtest(
         println!("\nBacktest Summary Results (Standalone Run):");
         println!("{}", backtest_table);
 
-        // Export JSON/CSV in run_dir
-        let csv_report_path = format!("{}/backtest_report.csv", run_dir);
-        if let Ok(mut file) = std::fs::File::create(&csv_report_path) {
-            writeln!(
-                file,
-                "coin,currency,strategy,strategy_return,buy_and_hold_return,strategy_sharpe,buy_and_hold_sharpe,strategy_max_drawdown,buy_and_hold_max_drawdown,win_rate,trades,rating"
-            )?;
-            for m in &backtest_metrics {
-                writeln!(
-                    file,
-                    "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{}",
-                    m.coin,
-                    m.currency,
-                    m.strategy,
-                    m.strategy_return,
-                    m.buy_and_hold_return,
-                    m.strategy_sharpe,
-                    m.buy_and_hold_sharpe,
-                    m.strategy_max_drawdown,
-                    m.buy_and_hold_max_drawdown,
-                    m.active_win_rate,
-                    m.total_trades,
-                    m.strategy_rating
-                )?;
-            }
-            println!("Backtest CSV report saved to: {}", csv_report_path);
-        }
-
-        let json_report_path = format!("{}/backtest_report.json", run_dir);
-        let mut report_map = std::collections::HashMap::new();
-        for m in &backtest_metrics {
-            report_map.insert(format!("{}_{}", m.coin, m.strategy), m.clone());
-        }
-        let report = backtest::BacktestReport {
-            timestamp: chrono::Local::now().to_rfc3339(),
-            metrics: report_map,
-        };
-        if let Ok(json_str) = serde_json::to_string_pretty(&report) {
-            std::fs::write(&json_report_path, json_str)?;
-            println!("Backtest JSON report saved to: {}", json_report_path);
+        if let Err(e) =
+            backtest::generate_backtest_report(&backtest_metrics, std::path::Path::new(&run_dir))
+        {
+            println!("Warning: Failed to save backtest report: {}", e);
         }
     } else {
         println!("No backtests executed successfully.");
