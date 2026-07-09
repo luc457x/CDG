@@ -30,7 +30,7 @@ Four tenets ensure correctness, safety, token efficiency:
 ## Repo Scope & Method
 
 - **Cycle**: Spec & Test-Driven Development (STDD). Specs, schemas, type contracts first, then TDD.
-- **Stack**: Baseline JS/TS, Python, Rust.
+- **Stack**: Rust, SQLite.
 - **GCP/Vertex Compatibility**: Ensure database schemas/queries, output formats, and performance footprint are fully compatible with GCP (Cloud SQL, BigQuery, GCS) and Vertex AI.
 
 ## Core Rules

@@ -13,7 +13,7 @@ trigger: always_on
 - **UBIQUITOUS_LANGUAGE.md** (Optional): Glossary
 - **docs/ADRs/**: Architecture Decision Records
 - **docs/**: General documentation artifacts
-- **plans/**: Execution plans (alpha, beta, etc.)
+- **plans/**: Execution plans
 - **rules/**: Trigger-based rule files
 - **skills/**: Executable skill protocols
 - **agents/**: Agent persona definitions
