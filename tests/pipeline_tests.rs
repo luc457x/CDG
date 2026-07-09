@@ -786,3 +786,97 @@ fn assert_single_asset_pipeline_outputs_present(output_dir: &str) {
         "Run directory starting with run_ should be created"
     );
 }
+
+// ── Phase 11: coins list 24h cache ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_coins_list_cache_hit_avoids_second_request() {
+    use cdg::api::coingecko::CoinGeckoClient;
+    use cdg::cache::Cache;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+
+    let coins_payload = serde_json::json!([
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+        {"id": "ethereum", "symbol": "eth", "name": "Ethereum"}
+    ])
+    .to_string();
+
+    // Expect exactly ONE call — second call should use cache
+    Mock::given(method("GET"))
+        .and(path("/coins/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(coins_payload))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("cache.db");
+    let cache = Arc::new(Cache::new(db.to_str().unwrap()).await.unwrap());
+
+    let client = CoinGeckoClient::new(cache)
+        .unwrap()
+        .with_base_url(server.uri());
+
+    // First call → hits server
+    let r1 = client.get_coins_list().await.unwrap();
+    // Second call → should hit SQLite cache (no extra HTTP request)
+    let r2 = client.get_coins_list().await.unwrap();
+
+    assert_eq!(r1.len(), 2);
+    assert_eq!(r2.len(), 2);
+    // wiremock will assert exactly 1 request on drop
+}
+
+// ── Phase 12: 503 retry ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_coingecko_retries_on_503() {
+    use cdg::api::coingecko::CoinGeckoClient;
+    use cdg::cache::Cache;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+
+    let ok_payload = serde_json::json!({"gecko_says": "(V3) To the moon!"}).to_string();
+
+    // First two requests return 503, third returns 200
+    Mock::given(method("GET"))
+        .and(path("/ping"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(2)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/ping"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(ok_payload))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("cache.db");
+    let cache = Arc::new(Cache::new(db.to_str().unwrap()).await.unwrap());
+
+    // Use very short retry delay for tests by using a fresh client with mock base URL
+    let client = CoinGeckoClient::new(cache)
+        .unwrap()
+        .with_base_url(server.uri())
+        .with_ttl(1)
+        .with_retry_delay_ms(1); // fast retry for tests
+
+    // Should succeed after retries — note: retry delay is 10s by default which is too
+    // long for a unit test; this test verifies the retry *logic path* succeeds on 200.
+    // For CI speed the server returns 200 on 3rd attempt which matches max_attempts=4.
+    let result = client.ping().await;
+    assert!(
+        result.is_ok(),
+        "ping should succeed after 503 retries: {:?}",
+        result
+    );
+}
