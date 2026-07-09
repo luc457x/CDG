@@ -1189,4 +1189,61 @@ fn test_print_candlestick_stdout_flat_and_single_row() {
     assert!(res_flat.is_ok());
 }
 
+#[tokio::test]
+async fn test_pipeline_flow_all_coins_fail() {
+    use wiremock::MockServer;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, ResponseTemplate};
+    use cdg::pipeline::PipelineConfig;
+
+    let db_path = "tests/test_all_coins_fail.db";
+    let output_dir = "tests/out_all_coins_fail";
+    let _ = std::fs::remove_dir_all(output_dir);
+    let _ = std::fs::remove_file(db_path);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    let config = PipelineConfig {
+        coin: "invalidcoin",
+        currency: "usd",
+        days: 30,
+        prep_ml: false,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: None,
+        cache_ttl: 300,
+        concurrency: None,
+        annualization_factor: None,
+        backtest: false,
+        strategy: "rsi",
+        fee: 0.0,
+        slippage: 0.0,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+        plots: false,
+        optimize: false,
+        candle_stdout: false,
+    };
+
+    let res = cdg::pipeline::run_pipeline_flow(config).await;
+    assert!(res.is_err());
+    let err_msg = res.err().unwrap().to_string();
+    assert!(err_msg.contains("No valid coins found to process") || err_msg.contains("No currency data was fetched"));
+
+    let _ = std::fs::remove_dir_all(output_dir);
+    let _ = std::fs::remove_file(db_path);
+}
+
+
 

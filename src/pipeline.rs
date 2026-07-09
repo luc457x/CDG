@@ -437,8 +437,8 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     }
 
     // Merge all currency DataFrames
-    if currency_dfs.is_empty() {
-        return Err(anyhow!("No cryptocurrency data was successfully loaded"));
+    if currency_dfs.is_empty() || currency_cols.is_empty() {
+        return Err(anyhow!("No currency data was fetched — check coin IDs and network connectivity"));
     }
     let mut main_df = currency_dfs[0].clone();
     if currency_dfs.len() > 1 {
@@ -889,6 +889,10 @@ pub async fn run_ohlcv_flow(
     let ohlc_data = cg_client
         .get_coin_ohlc(coin, currency, &days.to_string())
         .await?;
+
+    if ohlc_data.is_empty() {
+        return Err(anyhow!("No OHLCV data was fetched — check coin ID, vs currency, and network connectivity"));
+    }
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let ohlcv_dir = format!("{}/can_{}", output_dir, timestamp);
