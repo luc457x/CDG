@@ -273,3 +273,42 @@ async fn test_clients_with_progress_bar() {
 
     cleanup_db(db_path);
 }
+
+#[tokio::test]
+async fn test_coingecko_market_chart_range_same_day_alignment() {
+    let db_path = "tests/test_coingecko_cache_rounding.db";
+    cleanup_db(db_path);
+    let cache = std::sync::Arc::new(Cache::new(db_path).await.unwrap());
+
+    let mock_response = r#"{"prices": [[1700000000000, 50000.0]], "market_caps": [], "total_volumes": []}"#;
+    let (base_url, _server_handle) = start_mock_server(mock_response.to_string()).await;
+
+    let client = CoinGeckoClient::new(cache)
+        .unwrap()
+        .with_base_url(base_url)
+        .with_ttl(300);
+
+    let now_1 = 1719878400 + 3600; 
+    let now_2 = 1719878400 + 72000; 
+
+    let rounded_now_1 = (now_1 / 86400) * 86400;
+    let rounded_now_2 = (now_2 / 86400) * 86400;
+
+    assert_eq!(rounded_now_1, rounded_now_2);
+
+    let from_1 = rounded_now_1 - 10 * 86400;
+    let to_1 = rounded_now_1;
+
+    let from_2 = rounded_now_2 - 10 * 86400;
+    let to_2 = rounded_now_2;
+
+    let res_1 = client.get_coin_market_chart_range("bitcoin", "usd", from_1, to_1).await.unwrap();
+    assert_eq!(res_1["prices"][0][0], 1700000000000.0);
+
+    let res_2 = client.get_coin_market_chart_range("bitcoin", "usd", from_2, to_2).await.unwrap();
+    assert_eq!(res_2["prices"][0][0], 1700000000000.0);
+
+    cleanup_db(db_path);
+    drop(_server_handle);
+}
+

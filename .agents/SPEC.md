@@ -67,6 +67,14 @@ Port the python CoinGecko and Yahoo Finance data collector to a robust, modular,
 - **FR24 (Ambiguous Coin Resolution & Caching Optimization)**: Resolve coin IDs using a typed enum (Exact, Ambiguous, NotFound) to handle ambiguous results and optimize performance by lowercasing the list once.
 - **FR25 (Configurable Plotting)**: Allow disabling plots via CLI flags (`--plots`, `--no-plots`) or environment variable `CDG_PLOTS`.
 - **FR26 (Configurable Portfolio Optimization)**: Allow disabling portfolio optimization via CLI flags (`--optimize`, `--no-optimize`) or environment variable `CDG_OPTIMIZE`.
+- **FR27 (Cache Documentation & Miss Log)**: Document daily boundary rounding and TTL semantics in `doc/api_cache.md`, add log messages on cache miss, and link to it from README.
+- **FR28 (Candlestick PNG & ASCII Output)**: Support plotting candlestick charts (PNG and terminal ASCII), gated by flags.
+- **FR29 (Dev Profile Debug Symbols)**: Set `debug = 1` in `Cargo.toml` dev profile for backtraces.
+- **FR30 (Seed Parameter Consistency)**: Align CLI/optimization defaults with documentation in README.
+- **FR31 (Harden Cache Backend)**: Restrict access to internal cache methods, guard against negative TTL, fetch cache hits concurrently.
+- **FR32 (Harden Export Path & Safety)**: Change DataFrame export arguments to immutable, validate export paths, and avoid test file pollution.
+- **FR33 (Pipeline Ingestion Safety Rails)**: Check for empty currency columns and ingestion lists to prevent out-of-bounds index panics.
+
 
 
 ## 5. Business Rules (BR)

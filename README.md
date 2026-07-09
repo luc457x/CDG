@@ -157,6 +157,8 @@ The SQLite cache avoids rate limit blocks (429 errors) and speeds up repeated ru
 - **Rate Limit Handling**: On HTTP 429, CoinGecko retries up to 4 times with exponential backoff starting at 10 seconds. Yahoo Finance retries up to 4 times starting at 2 seconds.
 - **Timestamp Boundary Alignment:** To make cache hits reliable across multiple runs throughout the same day, start and end timestamps for API range requests are rounded to the nearest daily boundary (e.g. `00:00:00 UTC`). This ensures that the generated query URL remains identical and hits the cache rather than triggering a new network request.
 
+For a deeper dive into the cache backend details, daily boundary formula, and endpoint TTL configurations, see **[API Clients & Caching](doc/api_cache.md)**.
+
 ### 3. Weekend Gap Alignment (`--drop-weekends`)
 
 Cryptocurrency markets trade 24/7, while traditional stock markets (e.g., S&P 500) close on weekends. To merge them:

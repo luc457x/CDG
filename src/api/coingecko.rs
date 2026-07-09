@@ -97,6 +97,8 @@ impl CoinGeckoClient {
         if use_cache {
             if let Some(cached) = self.cache.get(&cache_url, self.ttl_secs).await? {
                 return Ok(cached);
+            } else {
+                eprintln!("Cache miss for URL: {}. Fetching fresh data.", cache_url);
             }
         }
 
@@ -218,6 +220,7 @@ impl CoinGeckoClient {
         let body = if let Some(cached) = self.cache.get(&base_endpoint, COINS_LIST_TTL).await? {
             cached
         } else {
+            eprintln!("Cache miss for URL: {}. Fetching fresh data.", base_endpoint);
             // Not cached — perform network request (reuse get_request with cache disabled, then store manually)
             let res = self.get_request(endpoint, &[], false).await?;
             self.cache.insert(&base_endpoint, &res).await?;

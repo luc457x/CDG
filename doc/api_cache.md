@@ -94,4 +94,22 @@ CREATE TABLE IF NOT EXISTS api_cache (
 
 CryptoDataGather needs to fetch historical data for custom time periods (e.g. `--days 90`). Standard dynamic API timestamp ranges create minor hourly changes in request URLs, leading to cache misses.
 
-To optimize cache hits, CDG rounds the start and end UNIX timestamps of historical queries to the nearest **daily UTC boundary** (`00:00:00 UTC`). This ensures that multiple pipeline runs on the same calendar day use the exact same request URLs and hit the SQLite cache instead of making network requests.
+- **Daily Boundary Rounding**: To optimize cache hits, CDG rounds the start and end UNIX timestamps of historical queries to the nearest **daily UTC boundary** (`00:00:00 UTC`) using the formula:
+  $$\text{rounded\_timestamp} = \left(\frac{\text{timestamp}}{86400}\right) \times 86400$$
+  This ensures that multiple pipeline runs on the same calendar day produce the exact same query parameters (`from` and `to`), resulting in identical cache keys and hitting the SQLite cache instead of making network requests.
+- **Cache Key Generation**: The cache key is the full canonical URL (including query parameters, fully percent-encoded).
+
+---
+
+## 6. TTL Expiry vs URL Pinning
+
+- **Separation of Concerns**: URL pinning (ensuring URLs are identical via rounding) is independent of cache TTL expiration.
+- **Eviction Rule**: A cache entry is considered stale and is evicted/deleted from the database if:
+  $$\text{current\_timestamp} - \text{cached\_at\_timestamp} > \text{ttl\_secs}$$
+- **TTL Values by Endpoint**:
+  - `/coins/list`: Hardcoded to **86,400 seconds (24 hours)**.
+  - `/coins/{id}/market_chart/range`: Default client TTL (**300 seconds / 5 minutes**), configurable via CLI `--cache-ttl` or UI Settings.
+  - `/coins/{id}/ohlc`: Default client TTL (**300 seconds / 5 minutes**).
+  - `/coins/{id}/tickers`: Default client TTL (**300 seconds / 5 minutes**).
+  - All other API endpoints (`/ping`, `/simple/price`, etc.): Default client TTL (**300 seconds / 5 minutes**).
+
