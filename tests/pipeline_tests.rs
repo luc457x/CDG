@@ -106,7 +106,7 @@ fn test_full_pipeline_smoke() {
     assert!(multi_df.column("ethereum_usd").is_ok());
 
     // Compute indicators for bitcoin_usd
-    let with_indicators =
+    let (with_indicators, _ind_warnings) =
         analysis::compute_returns_and_indicators(&multi_df, "bitcoin_usd").unwrap();
     assert!(with_indicators.column("bitcoin_usd_simple_return").is_ok());
     assert!(with_indicators.column("bitcoin_usd_rsi_14").is_ok());

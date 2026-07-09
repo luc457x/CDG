@@ -485,10 +485,20 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     pb.set_message("Computing technical indicators and returns...");
     let mut final_df = aligned_df;
     if light {
-        final_df = analysis::compute_returns_and_indicators(&final_df, &currency_cols[0])?;
+        let (df_with_ind, ind_warnings) =
+            analysis::compute_returns_and_indicators(&final_df, &currency_cols[0])?;
+        for w in &ind_warnings {
+            println!("Warning: {}", w);
+        }
+        final_df = df_with_ind;
     } else {
         for col in &currency_cols {
-            final_df = analysis::compute_returns_and_indicators(&final_df, col)?;
+            let (df_with_ind, ind_warnings) =
+                analysis::compute_returns_and_indicators(&final_df, col)?;
+            for w in &ind_warnings {
+                println!("Warning: {}", w);
+            }
+            final_df = df_with_ind;
         }
     }
 
@@ -862,7 +872,17 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         }
     }
 
-    println!("CDG data pipeline completed successfully!");
+    let mut status_parts: Vec<&str> = vec!["data exported"];
+    if !config.plots {
+        status_parts.push("plots skipped");
+    }
+    if !config.optimize {
+        status_parts.push("optimization skipped");
+    }
+    if !backtest {
+        status_parts.push("backtesting skipped");
+    }
+    println!("CDG pipeline complete ({})", status_parts.join(", "));
     Ok(())
 }
 
@@ -1012,6 +1032,7 @@ pub async fn run_standalone_backtest(
     _rebalance_frequency: &str,
     drop_weekends: bool,
     plots: bool,
+    annualization_factor: Option<f64>,
 ) -> Result<()> {
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
@@ -1033,7 +1054,7 @@ pub async fn run_standalone_backtest(
     println!("Slippage: {}", slippage);
     println!("Drop Weekends: {}", drop_weekends);
 
-    let ann_factor = if drop_weekends { 252.0 } else { 365.0 };
+    let ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
     // 1. Initialize Cache
     let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
@@ -1114,7 +1135,12 @@ pub async fn run_standalone_backtest(
             if cancel_token.is_cancelled() {
                 return Err(anyhow!("Operation cancelled"));
             }
-            df = analysis::compute_returns_and_indicators(&df, &price_col_name)?;
+            let (df_with_ind, ind_warnings) =
+                analysis::compute_returns_and_indicators(&df, &price_col_name)?;
+            for w in &ind_warnings {
+                println!("Warning: {}", w);
+            }
+            df = df_with_ind;
 
             coin_dfs.push(df);
             target_names.push(price_col_name);

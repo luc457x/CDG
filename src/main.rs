@@ -143,6 +143,10 @@ pub enum Commands {
         #[arg(long)]
         drop_weekends: bool,
 
+        /// Custom annualization factor override (e.g. 252 or 365); overrides --drop-weekends
+        #[arg(long, env = "ANNUALIZATION_FACTOR")]
+        annualization_factor: Option<f64>,
+
         /// Generate line plots and candlestick charts
         #[arg(long, default_value_t = true, env = "CDG_PLOTS", action = clap::ArgAction::Set)]
         plots: bool,
@@ -271,6 +275,7 @@ async fn main() -> Result<()> {
                 slippage,
                 rebalance_frequency,
                 drop_weekends,
+                annualization_factor,
                 plots,
                 no_plots,
             }) => {
@@ -289,6 +294,7 @@ async fn main() -> Result<()> {
                     &rebalance_frequency,
                     drop_weekends,
                     plots_effective,
+                    annualization_factor,
                 )
                 .await?;
             }

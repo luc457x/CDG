@@ -950,7 +950,11 @@ fn calculate_obv(close: &[f64], volume: &[Option<f64>]) -> Vec<Option<f64>> {
     obv
 }
 
-pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Result<DataFrame> {
+pub fn compute_returns_and_indicators(
+    df: &DataFrame,
+    target_column: &str,
+) -> Result<(DataFrame, Vec<String>)> {
+    let mut warnings: Vec<String> = Vec::new();
     let prices_series = df.column(target_column)?;
     let prices_raw: Vec<Option<f64>> = prices_series.f64()?.into_iter().collect();
     let n = prices_raw.len();
@@ -1056,19 +1060,19 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
         let highs_raw: Vec<Option<f64>> = df.column(&high_col)?.f64()?.into_iter().collect();
         let lows_raw: Vec<Option<f64>> = df.column(&low_col)?.f64()?.into_iter().collect();
 
-        // Gating warnings for null values
+        // Collect warnings for null OHLC values
         for &i in &valid_indices {
             if highs_raw[i].is_none() {
-                eprintln!(
+                warnings.push(format!(
                     "{}: {} high was null — ATR/ADX/Stoch set to None",
                     target_column, dates_raw[i]
-                );
+                ));
             }
             if lows_raw[i].is_none() {
-                eprintln!(
+                warnings.push(format!(
                     "{}: {} low was null — ATR/ADX/Stoch set to None",
                     target_column, dates_raw[i]
-                );
+                ));
             }
         }
 
@@ -1102,10 +1106,11 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
 
         for &i in &valid_indices {
             if vols_raw[i].is_none() {
-                eprintln!(
+                let msg = format!(
                     "{}: {} volume was null — OBV set to None",
                     target_column, dates_raw[i]
                 );
+                warnings.push(msg);
             }
         }
 
@@ -1119,7 +1124,7 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
     }
 
     let out_df = df.hstack(&new_cols)?;
-    Ok(out_df)
+    Ok((out_df, warnings))
 }
 
 pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
@@ -1300,10 +1305,12 @@ mod tests {
     #[test]
     fn test_returns_and_indicators_computation() {
         let mut prices = Vec::new();
-        for i in 0..30 {
+        for i in 0..60 {
             prices.push(100.0 + i as f64);
         }
-        let dates: Vec<String> = (0..30).map(|i| format!("2026-06-{:02}", i + 1)).collect();
+        let dates: Vec<String> = (0..60)
+            .map(|i| format!("2026-{:02}-{:02}", 1 + i / 28, 1 + i % 28))
+            .collect();
 
         let df = DataFrame::new(vec![
             Series::new("date", dates),
@@ -1311,7 +1318,7 @@ mod tests {
         ])
         .unwrap();
 
-        let res = compute_returns_and_indicators(&df, "bitcoin").unwrap();
+        let (res, warnings) = compute_returns_and_indicators(&df, "bitcoin").unwrap();
         assert!(res.column("bitcoin_simple_return").is_ok());
         assert!(res.column("bitcoin_log_return").is_ok());
         assert!(res.column("bitcoin_sma_20").is_ok());
@@ -1319,6 +1326,50 @@ mod tests {
         assert!(res.column("bitcoin_rsi_14").is_ok());
         assert!(res.column("bitcoin_macd_line").is_ok());
         assert!(res.column("bitcoin_bollinger_upper").is_ok());
+
+        // RSI must be in [0, 100] for all non-None values
+        let rsi_col = res.column("bitcoin_rsi_14").unwrap().f64().unwrap();
+        for v in rsi_col.into_iter().flatten() {
+            if v.is_finite() {
+                assert!((0.0..=100.0).contains(&v), "RSI out of bounds: {}", v);
+            }
+        }
+
+        // Bollinger upper > lower for all non-None pairs
+        let upper = res.column("bitcoin_bollinger_upper").unwrap().f64().unwrap();
+        let lower = res.column("bitcoin_bollinger_lower").unwrap().f64().unwrap();
+        for (u, l) in upper.into_iter().zip(lower.into_iter()) {
+            if let (Some(u), Some(l)) = (u, l) {
+                if u.is_finite() && l.is_finite() {
+                    assert!(u >= l, "Bollinger upper ({}) < lower ({})", u, l);
+                }
+            }
+        }
+
+        // MACD histogram = MACD line − signal for all non-None triples
+        let macd_line = res.column("bitcoin_macd_line").unwrap().f64().unwrap();
+        let macd_sig = res.column("bitcoin_macd_signal").unwrap().f64().unwrap();
+        let macd_hist = res.column("bitcoin_macd_histogram").unwrap().f64().unwrap();
+        for ((ml, ms), mh) in macd_line
+            .into_iter()
+            .zip(macd_sig.into_iter())
+            .zip(macd_hist.into_iter())
+        {
+            if let (Some(ml), Some(ms), Some(mh)) = (ml, ms, mh) {
+                if ml.is_finite() && ms.is_finite() && mh.is_finite() {
+                    assert!(
+                        (mh - (ml - ms)).abs() < 1e-9,
+                        "MACD hist ({}) != line ({}) - signal ({})",
+                        mh,
+                        ml,
+                        ms
+                    );
+                }
+            }
+        }
+
+        // No volume → no OBV warnings expected on pure price data
+        assert!(warnings.is_empty());
     }
 
     #[test]
@@ -1463,6 +1514,67 @@ mod tests {
     }
 
     #[test]
+    fn test_macd_golden() {
+        // Constant prices → EMA12==EMA26 → MACD line=0, histogram=0
+        // EMA26 requires 26 bars (index 25+), EMA9 of MACD requires 9 more → signal valid from index 33+
+        let prices = vec![50.0f64; 50];
+        let (macd_line, signal_line, histogram) = calculate_macd(&prices);
+
+        // Verify histogram = line − signal for all Some triples
+        for i in 0..prices.len() {
+            match (macd_line[i], signal_line[i], histogram[i]) {
+                (Some(ml), Some(ms), Some(mh)) => {
+                    assert!(
+                        (mh - (ml - ms)).abs() < 1e-9,
+                        "MACD hist ({}) != line ({}) - signal ({}) at i={}",
+                        mh,
+                        ml,
+                        ms,
+                        i
+                    );
+                }
+                (None, None, None) => {}
+                // signal may be None while line is Some during signal warm-up — that is fine
+                _ => {}
+            }
+        }
+
+        // After full warm-up (EMA26 + EMA9 of MACD = index 33+), all three should be Some(0)
+        for i in 33..prices.len() {
+            let ml = macd_line[i].expect(&format!("macd_line None at i={}", i));
+            let ms = signal_line[i].expect(&format!("signal_line None at i={}", i));
+            let mh = histogram[i].expect(&format!("histogram None at i={}", i));
+            assert!(ml.abs() < 1e-9, "MACD line non-zero for constant prices at i={}: {}", i, ml);
+            assert!((mh - (ml - ms)).abs() < 1e-9, "hist != line-signal at i={}", i);
+        }
+    }
+
+    #[test]
+    fn test_adx_golden() {
+        // Monotonically rising prices → clear uptrend → ADX should become positive
+        // With period=14: dx starts at index 13, first ADX at dx_valid[13].0 = 26
+        let n = 60usize;
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + i as f64).collect();
+        let high: Vec<Option<f64>> = close.iter().map(|&c| Some(c + 1.0)).collect();
+        let low: Vec<Option<f64>> = close.iter().map(|&c| Some(c - 1.0)).collect();
+        let adx = calculate_adx(&high, &low, &close, 14);
+        // First 26 indices (0..=25) should be None
+        for i in 0..26 {
+            assert_eq!(adx[i], None, "expected None at warm-up index {}", i);
+        }
+        // From index 26 onward ADX must be in [0, 100]
+        for i in 26..n {
+            let val = adx[i].expect(&format!("expected Some ADX at i={}", i));
+            assert!(
+                val >= 0.0 && val <= 100.0,
+                "ADX out of [0,100] at i={}: {}",
+                i,
+                val
+            );
+        }
+    }
+
+    #[test]
     fn test_advanced_indicators_computation() {
         let dates: Vec<String> = (0..35).map(|i| format!("2026-06-{:02}", i + 1)).collect();
         let highs: Vec<f64> = (0..35).map(|i| 102.0 + i as f64).collect();
@@ -1479,7 +1591,7 @@ mod tests {
         ])
         .unwrap();
 
-        let res = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+        let (res, _warnings) = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
         assert!(res.column("bitcoin_usd_atr_14").is_ok());
         assert!(res.column("bitcoin_usd_stoch_k_14").is_ok());
         assert!(res.column("bitcoin_usd_stoch_d_3").is_ok());
@@ -1500,7 +1612,7 @@ mod tests {
         ])
         .unwrap();
 
-        let res = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+        let (res, _warnings) = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
         let obv = res.column("bitcoin_usd_obv").unwrap().f64().unwrap();
         for i in 0..obv.len() {
             assert_eq!(obv.get(i), Some(10.0));
@@ -1660,7 +1772,7 @@ mod tests {
         ])
         .unwrap();
 
-        let res = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+        let (res, _warnings) = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
 
         let atr = res.column("bitcoin_usd_atr_14").unwrap().f64().unwrap();
         let stoch_k = res.column("bitcoin_usd_stoch_k_14").unwrap().f64().unwrap();
