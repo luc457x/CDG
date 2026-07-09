@@ -1,6 +1,6 @@
+use crate::{analysis, api, backtest, cache, export, plot};
 use anyhow::{anyhow, Result};
 use std::io::Write;
-use crate::{analysis, api, cache, export, plot, backtest};
 
 pub struct PipelineConfig<'a> {
     pub coin: &'a str,
@@ -300,9 +300,7 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
     // Merge all currency DataFrames
     if currency_dfs.is_empty() {
-        return Err(anyhow!(
-            "No cryptocurrency data was successfully loaded"
-        ));
+        return Err(anyhow!("No cryptocurrency data was successfully loaded"));
     }
     let mut main_df = currency_dfs[0].clone();
     if currency_dfs.len() > 1 {
@@ -428,9 +426,16 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         println!("RUNNING PORTFOLIO OPTIMIZATION (Markowitz Monte Carlo)");
         println!("==================================================");
 
-        let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
+        let final_ann_factor =
+            annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
-        match crate::optimization::run_monte_carlo(&final_df, &currency_cols, final_ann_factor, 10000, seed) {
+        match crate::optimization::run_monte_carlo(
+            &final_df,
+            &currency_cols,
+            final_ann_factor,
+            10000,
+            seed,
+        ) {
             Ok(opt_res) => {
                 println!("\nOptimal Portfolio Formulations (Annualized):");
                 let metrics_table = crate::optimization::format_portfolio_metrics_table(&opt_res);
@@ -481,7 +486,8 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         println!("\n==================================================");
         println!("RUNNING STRATEGY & PORTFOLIO BACKTESTING");
         println!("==================================================");
-        let final_ann_factor = annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
+        let final_ann_factor =
+            annualization_factor.unwrap_or(if drop_weekends { 252.0 } else { 365.0 });
 
         let mut backtest_metrics = Vec::new();
         let mut custom_configs = Vec::new();
@@ -493,7 +499,11 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 custom_configs.push(Some(cfg));
             }
         } else if strategy.to_lowercase() == "all" {
-            strats = vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()];
+            strats = vec![
+                "rsi".to_string(),
+                "macd".to_string(),
+                "bollinger".to_string(),
+            ];
             custom_configs = vec![None, None, None];
         } else {
             strats = vec![strategy.to_lowercase()];
@@ -504,7 +514,8 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         crate::utils::validate_safe_path(&backtest_dir)?;
         std::fs::create_dir_all(&backtest_dir)?;
 
-        let mut asset_bh_caches: std::collections::HashMap<String, Option<backtest::BhCache>> = std::collections::HashMap::new();
+        let mut asset_bh_caches: std::collections::HashMap<String, Option<backtest::BhCache>> =
+            std::collections::HashMap::new();
 
         // 1. Backtest individual assets
         for col in &currency_cols {
@@ -541,7 +552,10 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                             strat,
                             &plot_path,
                         ) {
-                            println!("Warning: Failed to generate backtest equity plot for {} ({}): {}", col, strat, e);
+                            println!(
+                                "Warning: Failed to generate backtest equity plot for {} ({}): {}",
+                                col, strat, e
+                            );
                         }
                     }
                     Err(e) => {
@@ -562,21 +576,43 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 } else {
                     coin.to_string()
                 };
-                let prices: Vec<Option<f64>> = final_df.column(&close_col)?.f64()?.into_iter().collect();
+                let prices: Vec<Option<f64>> =
+                    final_df.column(&close_col)?.f64()?.into_iter().collect();
                 let rsi_col = format!("{}_rsi_14", coin);
-                let rsi: Option<Vec<Option<f64>>> = final_df.column(&rsi_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let rsi: Option<Vec<Option<f64>>> = final_df
+                    .column(&rsi_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
                 let macd_line_col = format!("{}_macd_line", coin);
-                let macd_line: Option<Vec<Option<f64>>> = final_df.column(&macd_line_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let macd_line: Option<Vec<Option<f64>>> = final_df
+                    .column(&macd_line_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
                 let macd_signal_col = format!("{}_macd_signal", coin);
-                let macd_signal: Option<Vec<Option<f64>>> = final_df.column(&macd_signal_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let macd_signal: Option<Vec<Option<f64>>> = final_df
+                    .column(&macd_signal_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
                 let macd_hist_col = format!("{}_macd_histogram", coin);
-                let macd_hist: Option<Vec<Option<f64>>> = final_df.column(&macd_hist_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let macd_hist: Option<Vec<Option<f64>>> = final_df
+                    .column(&macd_hist_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
                 let bb_upper_col = format!("{}_bollinger_upper", coin);
-                let bb_upper: Option<Vec<Option<f64>>> = final_df.column(&bb_upper_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let bb_upper: Option<Vec<Option<f64>>> = final_df
+                    .column(&bb_upper_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
                 let bb_lower_col = format!("{}_bollinger_lower", coin);
-                let bb_lower: Option<Vec<Option<f64>>> = final_df.column(&bb_lower_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let bb_lower: Option<Vec<Option<f64>>> = final_df
+                    .column(&bb_lower_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
                 let bb_mid_col = format!("{}_sma_20", coin);
-                let bb_mid: Option<Vec<Option<f64>>> = final_df.column(&bb_mid_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+                let bb_mid: Option<Vec<Option<f64>>> = final_df
+                    .column(&bb_mid_col)
+                    .ok()
+                    .map(|c| c.f64().unwrap().into_iter().collect());
 
                 let mut first_valid_idx = 0;
                 for i in 0..n_rows {
@@ -621,10 +657,10 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 buy_and_hold_sharpe: 0.0,
                 strategy_max_drawdown: 0.0,
                 buy_and_hold_max_drawdown: 0.0,
-                prediction_accuracy: 1.0,
+                prediction_accuracy: 0.0,
                 prediction_r2: 0.0,
-                active_win_rate: 1.0,
-                prediction_rating: "N/A".to_string(),
+                active_win_rate: 0.0,
+                prediction_rating: "n/a".to_string(),
                 strategy_rating: "good".to_string(),
                 true_positives: 0,
                 false_positives: 0,
@@ -659,7 +695,10 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
-                    let plot_path = format!("{}/max_sharpe_portfolio_rebalanced_backtest.png", backtest_dir);
+                    let plot_path = format!(
+                        "{}/max_sharpe_portfolio_rebalanced_backtest.png",
+                        backtest_dir
+                    );
                     let active_dates = dates[dates.len() - equity.len()..].to_vec();
                     if let Err(e) = plot::plot_backtest_equity(
                         &active_dates,
@@ -692,7 +731,8 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
-                    let plot_path = format!("{}/min_vol_portfolio_rebalanced_backtest.png", backtest_dir);
+                    let plot_path =
+                        format!("{}/min_vol_portfolio_rebalanced_backtest.png", backtest_dir);
                     let active_dates = dates[dates.len() - equity.len()..].to_vec();
                     if let Err(e) = plot::plot_backtest_equity(
                         &active_dates,
@@ -706,7 +746,10 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    println!("Warning: Portfolio backtest failed for min_volatility: {}", e);
+                    println!(
+                        "Warning: Portfolio backtest failed for min_volatility: {}",
+                        e
+                    );
                 }
             }
         }
@@ -997,7 +1040,11 @@ pub async fn run_standalone_backtest(
             custom_configs.push(Some(cfg));
         }
     } else if strategy.to_lowercase() == "all" {
-        strats = vec!["rsi".to_string(), "macd".to_string(), "bollinger".to_string()];
+        strats = vec![
+            "rsi".to_string(),
+            "macd".to_string(),
+            "bollinger".to_string(),
+        ];
         custom_configs = vec![None, None, None];
     } else {
         strats = vec![strategy.to_lowercase()];
@@ -1013,7 +1060,17 @@ pub async fn run_standalone_backtest(
         let mut bh_cache = None;
         for (strat, custom_cfg) in strats.iter().zip(custom_configs.iter()) {
             // Standalone run uses default annualization 365.0
-            match backtest::run_backtest_for_asset(df, col, strat, custom_cfg.as_ref(), fee, slippage, 365.0, days as usize, &mut bh_cache) {
+            match backtest::run_backtest_for_asset(
+                df,
+                col,
+                strat,
+                custom_cfg.as_ref(),
+                fee,
+                slippage,
+                365.0,
+                days as usize,
+                &mut bh_cache,
+            ) {
                 Ok((metrics, equity, bh_equity)) => {
                     backtest_metrics.push(metrics);
 
@@ -1034,7 +1091,10 @@ pub async fn run_standalone_backtest(
                         strat,
                         &plot_path,
                     ) {
-                        println!("Warning: Failed to generate backtest equity plot for {} ({}): {}", col, strat, e);
+                        println!(
+                            "Warning: Failed to generate backtest equity plot for {} ({}): {}",
+                            col, strat, e
+                        );
                     }
                 }
                 Err(e) => {
@@ -1054,19 +1114,40 @@ pub async fn run_standalone_backtest(
             };
             let prices: Vec<Option<f64>> = df.column(&close_col)?.f64()?.into_iter().collect();
             let rsi_col = format!("{}_rsi_14", col);
-            let rsi: Option<Vec<Option<f64>>> = df.column(&rsi_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let rsi: Option<Vec<Option<f64>>> = df
+                .column(&rsi_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
             let macd_line_col = format!("{}_macd_line", col);
-            let macd_line: Option<Vec<Option<f64>>> = df.column(&macd_line_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let macd_line: Option<Vec<Option<f64>>> = df
+                .column(&macd_line_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
             let macd_signal_col = format!("{}_macd_signal", col);
-            let macd_signal: Option<Vec<Option<f64>>> = df.column(&macd_signal_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let macd_signal: Option<Vec<Option<f64>>> = df
+                .column(&macd_signal_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
             let macd_hist_col = format!("{}_macd_histogram", col);
-            let macd_hist: Option<Vec<Option<f64>>> = df.column(&macd_hist_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let macd_hist: Option<Vec<Option<f64>>> = df
+                .column(&macd_hist_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
             let bb_upper_col = format!("{}_bollinger_upper", col);
-            let bb_upper: Option<Vec<Option<f64>>> = df.column(&bb_upper_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let bb_upper: Option<Vec<Option<f64>>> = df
+                .column(&bb_upper_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
             let bb_lower_col = format!("{}_bollinger_lower", col);
-            let bb_lower: Option<Vec<Option<f64>>> = df.column(&bb_lower_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let bb_lower: Option<Vec<Option<f64>>> = df
+                .column(&bb_lower_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
             let bb_mid_col = format!("{}_sma_20", col);
-            let bb_mid: Option<Vec<Option<f64>>> = df.column(&bb_mid_col).ok().map(|c| c.f64().unwrap().into_iter().collect());
+            let bb_mid: Option<Vec<Option<f64>>> = df
+                .column(&bb_mid_col)
+                .ok()
+                .map(|c| c.f64().unwrap().into_iter().collect());
 
             for i in 0..n_rows {
                 let price_ok = prices[i].is_some();
@@ -1104,10 +1185,10 @@ pub async fn run_standalone_backtest(
                 buy_and_hold_sharpe: 0.0,
                 strategy_max_drawdown: 0.0,
                 buy_and_hold_max_drawdown: 0.0,
-                prediction_accuracy: 1.0,
+                prediction_accuracy: 0.0,
                 prediction_r2: 0.0,
-                active_win_rate: 1.0,
-                prediction_rating: "N/A".to_string(),
+                active_win_rate: 0.0,
+                prediction_rating: "n/a".to_string(),
                 strategy_rating: "good".to_string(),
                 true_positives: 0,
                 false_positives: 0,
@@ -1171,4 +1252,3 @@ pub async fn run_standalone_backtest(
 
     Ok(())
 }
-

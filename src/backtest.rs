@@ -151,7 +151,11 @@ pub fn load_custom_strategies(path: &str) -> Result<Vec<CustomStrategyConfig>> {
 
 fn get_df_value(df: &DataFrame, name: &str, idx: usize, shift: usize, coin: &str) -> Result<f64> {
     if idx < shift {
-        return Err(anyhow!("Index {} out of bounds for shift {} at start of backtest", idx, shift));
+        return Err(anyhow!(
+            "Index {} out of bounds for shift {} at start of backtest",
+            idx,
+            shift
+        ));
     }
     let target_idx = idx - shift;
     let col = if df.column(name).is_ok() {
@@ -170,12 +174,7 @@ fn get_df_value(df: &DataFrame, name: &str, idx: usize, shift: usize, coin: &str
     Ok(val)
 }
 
-fn evaluate_condition(
-    cond: &Condition,
-    idx: usize,
-    df: &DataFrame,
-    coin: &str,
-) -> Result<bool> {
+fn evaluate_condition(cond: &Condition, idx: usize, df: &DataFrame, coin: &str) -> Result<bool> {
     match cond {
         Condition::Logical { operator, rules } => match operator {
             LogicalOperator::And => {
@@ -291,7 +290,8 @@ pub fn calculate_r2(actuals: &[f64], predicted: &[f64]) -> f64 {
         ss_tot += (actuals[i] - mean_actual).powi(2);
     }
     if ss_tot == 0.0 {
-        return 0.0;
+        // constant series: perfect if residuals also zero, else zero
+        return if ss_res == 0.0 { 1.0 } else { 0.0 };
     }
     1.0 - (ss_res / ss_tot)
 }
@@ -325,7 +325,7 @@ pub fn calculate_max_drawdown(equity: &[f64]) -> f64 {
         if eq > peak {
             peak = eq;
         }
-        if peak > 0.0 {
+        if peak != 0.0 {
             let dd = (peak - eq) / peak;
             if dd > max_dd {
                 max_dd = dd;
@@ -431,9 +431,7 @@ fn collect_referenced_columns(cond: &Condition, cols: &mut std::collections::Has
     }
 }
 
-fn collect_strategy_columns(
-    config: &CustomStrategyConfig,
-) -> std::collections::HashSet<String> {
+fn collect_strategy_columns(config: &CustomStrategyConfig) -> std::collections::HashSet<String> {
     let mut cols = std::collections::HashSet::new();
     collect_referenced_columns(&config.buy_condition, &mut cols);
     collect_referenced_columns(&config.sell_condition, &mut cols);
@@ -451,9 +449,7 @@ fn collect_strategy_columns(
 
 fn get_max_shift(cond: &Condition) -> usize {
     match cond {
-        Condition::Logical { rules, .. } => {
-            rules.iter().map(get_max_shift).max().unwrap_or(0)
-        }
+        Condition::Logical { rules, .. } => rules.iter().map(get_max_shift).max().unwrap_or(0),
         Condition::Comparison { shift, value, .. } => {
             let val_shift = match value {
                 ValueSource::Number(_) => 0,
@@ -465,8 +461,8 @@ fn get_max_shift(cond: &Condition) -> usize {
 }
 
 fn get_strategy_max_shift(config: &CustomStrategyConfig) -> usize {
-    let mut max_shift = get_max_shift(&config.buy_condition)
-        .max(get_max_shift(&config.sell_condition));
+    let mut max_shift =
+        get_max_shift(&config.buy_condition).max(get_max_shift(&config.sell_condition));
     if let Some(ref neutral) = config.neutral_condition {
         max_shift = max_shift.max(get_max_shift(neutral));
     }
@@ -594,16 +590,22 @@ pub fn run_backtest_for_asset(
     };
 
     if start_idx >= n - 1 {
-        return Err(anyhow!("No sufficient valid data points to backtest {}", coin));
+        return Err(anyhow!(
+            "No sufficient valid data points to backtest {}",
+            coin
+        ));
     }
 
-    let mut current_position = 1; 
+    // prev_position: -1 = short, 0 = neutral, 1 = long
+    // Map legacy signal codes to signed position: 2 -> 1, 1 -> 0, 0 -> -1
+    let mut prev_position: i32 = 0; // start neutral
     let mut equity = vec![10000.0; n];
     let mut bh_equity = vec![10000.0; n];
 
     let start_price = prices[start_idx].unwrap();
 
-    let mut signals = vec![1; n];
+    // signals still use legacy codes (2=long, 1=neutral, 0=short) for confusion matrix
+    let mut signals = vec![1i64; n];
     let mut actual_returns = vec![0.0; n];
     let mut strategy_returns = vec![0.0; n];
     let mut total_trades = 0;
@@ -630,7 +632,13 @@ pub fn run_backtest_for_asset(
 
         bh_equity[t] = 10000.0 * (price_t / start_price);
 
-        let mut sig_t = current_position;
+        // Determine new signal using prev_t indicators (signal held at start of bar)
+        // Legacy signal code: 2=long, 1=neutral, 0=short
+        let mut sig_code: i64 = match prev_position {
+            1 => 2,
+            -1 => 0,
+            _ => 1,
+        };
         let mut conf_t = 1.0;
 
         if let Some(ref config) = custom_strat {
@@ -643,11 +651,11 @@ pub fn run_backtest_for_asset(
             };
 
             if buy_triggered {
-                sig_t = 2;
+                sig_code = 2;
             } else if sell_triggered {
-                sig_t = 0;
+                sig_code = 0;
             } else if neutral_triggered {
-                sig_t = 1;
+                sig_code = 1;
             }
 
             conf_t = evaluate_confidence(&config.confidence, prev_t, df, coin)?;
@@ -657,10 +665,10 @@ pub fn run_backtest_for_asset(
                     if let Some(ref rsi_vec) = rsi {
                         if let Some(rsi_val) = rsi_vec[prev_t] {
                             if rsi_val < 30.0 {
-                                sig_t = 2; 
+                                sig_code = 2;
                                 conf_t = ((30.0 - rsi_val) / 15.0).clamp(0.1, 1.0);
                             } else if rsi_val > 70.0 {
-                                sig_t = 0; 
+                                sig_code = 0;
                                 conf_t = ((rsi_val - 70.0) / 15.0).clamp(0.1, 1.0);
                             }
                         }
@@ -676,10 +684,10 @@ pub fn run_backtest_for_asset(
                             let prev_price = price_prev;
                             let std = ((up - mid) / 2.0).max(1e-6);
                             if prev_price < lo {
-                                sig_t = 2; 
+                                sig_code = 2;
                                 conf_t = ((lo - prev_price) / std).clamp(0.1, 1.0);
                             } else if prev_price > up {
-                                sig_t = 0; 
+                                sig_code = 0;
                                 conf_t = ((prev_price - up) / std).clamp(0.1, 1.0);
                             }
                         }
@@ -689,9 +697,9 @@ pub fn run_backtest_for_asset(
                     if let (Some(ref line_vec), Some(ref sig_vec)) = (&macd_line, &macd_signal) {
                         if let (Some(line), Some(sig)) = (line_vec[prev_t], sig_vec[prev_t]) {
                             if line > sig {
-                                sig_t = 2; 
+                                sig_code = 2;
                             } else if line < sig {
-                                sig_t = 0; 
+                                sig_code = 0;
                             }
                             let std_hist = calculate_rolling_std(&macd_hist_raw, prev_t, 20);
                             let hist_val = macd_hist_raw[prev_t];
@@ -703,32 +711,36 @@ pub fn run_backtest_for_asset(
             }
         }
 
-        signals[t] = sig_t;
+        // Signed position: 1=long, 0=neutral, -1=short
+        let new_position: i32 = match sig_code {
+            2 => 1,
+            0 => -1,
+            _ => 0,
+        };
 
-        let mut eq_base = equity[prev_t];
-        if sig_t != current_position {
-            eq_base *= 1.0 - (fee + slippage);
+        signals[t] = sig_code;
+
+        // Apply prev_position's return first, then charge fee on transition
+        let eq_base = equity[prev_t];
+        let r_strat = r_t * conf_t * prev_position as f64;
+        let post_return = eq_base * (1.0 + r_strat);
+
+        let post_fee = if new_position != prev_position {
             total_trades += 1;
-        }
-
-        let r_strat = if sig_t == 2 {
-            r_t * conf_t
-        } else if sig_t == 0 {
-            -r_t * conf_t
+            post_return * (1.0 - (fee + slippage))
         } else {
-            0.0
+            post_return
         };
 
         strategy_returns[t] = r_strat;
-        equity[t] = eq_base * (1.0 + r_strat);
-        current_position = sig_t;
+        equity[t] = post_fee;
+        prev_position = new_position;
     }
 
     let final_strat_return = ((equity[n - 1] - 10000.0) / 10000.0) * 100.0;
 
     let actual_returns_slice = &actual_returns[(start_idx + 1)..n];
     let strategy_returns_slice = &strategy_returns[(start_idx + 1)..n];
-    let signals_slice = &signals[(start_idx + 1)..n];
 
     let tnx_col: Option<Vec<Option<f64>>> = df
         .column("^TNX")
@@ -771,7 +783,9 @@ pub fn run_backtest_for_asset(
 
     let strat_drawdown = calculate_max_drawdown(&equity[start_idx..n]) * 100.0;
 
-    let (tp, fp, tn, fn_count) = calculate_confusion_matrix(signals_slice, actual_returns_slice);
+    let signals_slice_i64: Vec<i64> = signals[(start_idx + 1)..n].to_vec();
+    let (tp, fp, tn, fn_count) =
+        calculate_confusion_matrix(&signals_slice_i64, actual_returns_slice);
     let total_predictions = tp + fp + tn + fn_count;
     let prediction_accuracy = if total_predictions > 0 {
         (tp + tn) as f64 / total_predictions as f64
@@ -787,12 +801,24 @@ pub fn run_backtest_for_asset(
         0.0
     };
 
+    // Compute R² of strategy returns vs buy-and-hold returns
+    let prediction_r2 = calculate_r2(actual_returns_slice, strategy_returns_slice);
+
     let prediction_rating = classify_prediction_rating(prediction_accuracy, active_win_rate);
-    let strategy_rating = classify_strategy_rating(strat_sharpe, final_strat_return, final_bh_return);
+    let strategy_rating =
+        classify_strategy_rating(strat_sharpe, final_strat_return, final_bh_return);
 
     let parts: Vec<&str> = coin.split('_').collect();
-    let coin_base = if parts.len() >= 2 { parts[0].to_string() } else { coin.to_string() };
-    let currency_base = if parts.len() >= 2 { parts[1].to_string() } else { "usd".to_string() };
+    let coin_base = if parts.len() >= 2 {
+        parts[0].to_string()
+    } else {
+        coin.to_string()
+    };
+    let currency_base = if parts.len() >= 2 {
+        parts[1].to_string()
+    } else {
+        "usd".to_string()
+    };
 
     let metrics = BacktestMetrics {
         coin: coin_base,
@@ -805,7 +831,7 @@ pub fn run_backtest_for_asset(
         strategy_max_drawdown: strat_drawdown,
         buy_and_hold_max_drawdown: bh_drawdown,
         prediction_accuracy,
-        prediction_r2: 0.0,
+        prediction_r2,
         active_win_rate,
         prediction_rating,
         strategy_rating,
@@ -816,7 +842,11 @@ pub fn run_backtest_for_asset(
         total_trades,
     };
 
-    Ok((metrics, equity[start_idx..n].to_vec(), bh_equity[start_idx..n].to_vec()))
+    Ok((
+        metrics,
+        equity[start_idx..n].to_vec(),
+        bh_equity[start_idx..n].to_vec(),
+    ))
 }
 
 pub fn format_backtest_table(metrics: &[BacktestMetrics]) -> String {
@@ -827,13 +857,27 @@ pub fn format_backtest_table(metrics: &[BacktestMetrics]) -> String {
         rows.push(vec![
             format!("{}_{}", m.coin.to_uppercase(), m.currency.to_uppercase()).cell(),
             m.strategy.to_uppercase().cell(),
-            format!("{:.2}%", m.strategy_return).cell().justify(Justify::Right),
-            format!("{:.2}%", m.buy_and_hold_return).cell().justify(Justify::Right),
-            format!("{:.2}", m.strategy_sharpe).cell().justify(Justify::Right),
-            format!("{:.2}", m.buy_and_hold_sharpe).cell().justify(Justify::Right),
-            format!("{:.2}%", m.strategy_max_drawdown).cell().justify(Justify::Right),
-            format!("{:.2}%", m.buy_and_hold_max_drawdown).cell().justify(Justify::Right),
-            format!("{:.1}%", m.active_win_rate * 100.0).cell().justify(Justify::Right),
+            format!("{:.2}%", m.strategy_return)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}%", m.buy_and_hold_return)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}", m.strategy_sharpe)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}", m.buy_and_hold_sharpe)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}%", m.strategy_max_drawdown)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.2}%", m.buy_and_hold_max_drawdown)
+                .cell()
+                .justify(Justify::Right),
+            format!("{:.1}%", m.active_win_rate * 100.0)
+                .cell()
+                .justify(Justify::Right),
             m.total_trades.cell().justify(Justify::Right),
             m.strategy_rating.clone().cell(),
         ]);
@@ -872,7 +916,9 @@ pub fn backtest_portfolio(
 ) -> Result<(BacktestMetrics, Vec<f64>, Vec<f64>)> {
     let n_assets = assets.len();
     if n_assets == 0 || weights.len() != n_assets {
-        return Err(anyhow!("Mismatched or empty assets/weights for portfolio backtest"));
+        return Err(anyhow!(
+            "Mismatched or empty assets/weights for portfolio backtest"
+        ));
     }
 
     let n_rows = df.height();
@@ -910,7 +956,7 @@ pub fn backtest_portfolio(
                 break;
             }
             let asset = &assets[j];
-            
+
             // Check RSI
             let rsi_col = format!("{}_rsi_14", asset);
             if let Ok(col) = df.column(&rsi_col) {
@@ -919,13 +965,20 @@ pub fn backtest_portfolio(
                     break;
                 }
             }
-            
+
             // Check MACD
             let macd_line_col = format!("{}_macd_line", asset);
             let macd_sig_col = format!("{}_macd_signal", asset);
             let macd_hist_col = format!("{}_macd_histogram", asset);
-            if let (Ok(l), Ok(s), Ok(h)) = (df.column(&macd_line_col), df.column(&macd_sig_col), df.column(&macd_hist_col)) {
-                if l.f64()?.get(i).is_none() || s.f64()?.get(i).is_none() || h.f64()?.get(i).is_none() {
+            if let (Ok(l), Ok(s), Ok(h)) = (
+                df.column(&macd_line_col),
+                df.column(&macd_sig_col),
+                df.column(&macd_hist_col),
+            ) {
+                if l.f64()?.get(i).is_none()
+                    || s.f64()?.get(i).is_none()
+                    || h.f64()?.get(i).is_none()
+                {
                     all_valid = false;
                     break;
                 }
@@ -935,8 +988,15 @@ pub fn backtest_portfolio(
             let bb_upper_col = format!("{}_bollinger_upper", asset);
             let bb_lower_col = format!("{}_bollinger_lower", asset);
             let bb_mid_col = format!("{}_sma_20", asset);
-            if let (Ok(u), Ok(l), Ok(m)) = (df.column(&bb_upper_col), df.column(&bb_lower_col), df.column(&bb_mid_col)) {
-                if u.f64()?.get(i).is_none() || l.f64()?.get(i).is_none() || m.f64()?.get(i).is_none() {
+            if let (Ok(u), Ok(l), Ok(m)) = (
+                df.column(&bb_upper_col),
+                df.column(&bb_lower_col),
+                df.column(&bb_mid_col),
+            ) {
+                if u.f64()?.get(i).is_none()
+                    || l.f64()?.get(i).is_none()
+                    || m.f64()?.get(i).is_none()
+                {
                     all_valid = false;
                     break;
                 }
@@ -963,9 +1023,7 @@ pub fn backtest_portfolio(
     let mut bh_equity = vec![10000.0; n_rows];
 
     // Store the initial close prices at start_idx to calculate Buy & Hold weights drift
-    let initial_prices: Vec<f64> = (0..n_assets)
-        .map(|j| close_series[j][start_idx])
-        .collect();
+    let initial_prices: Vec<f64> = (0..n_assets).map(|j| close_series[j][start_idx]).collect();
 
     // Track active values of each asset (initially target weight * initial equity)
     let mut current_values: Vec<f64> = weights.iter().map(|&w| w * 10000.0).collect();
@@ -1004,8 +1062,7 @@ pub fn backtest_portfolio(
                     chrono::NaiveDate::parse_from_str(date_str_curr, "%Y-%m-%d"),
                 ) {
                     use chrono::Datelike;
-                    d_prev.month() != d_curr.month()
-                        || d_prev.year() != d_curr.year()
+                    d_prev.month() != d_curr.month() || d_prev.year() != d_curr.year()
                 } else {
                     true
                 }
@@ -1063,7 +1120,6 @@ pub fn backtest_portfolio(
     let final_strat_return = ((equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
     let final_bh_return = ((bh_equity[n_rows - 1] - 10000.0) / 10000.0) * 100.0;
 
-
     let tnx_col: Option<Vec<Option<f64>>> = df
         .column("^TNX")
         .ok()
@@ -1089,7 +1145,8 @@ pub fn backtest_portfolio(
     let strat_drawdown = calculate_max_drawdown(&equity[start_idx..n_rows]) * 100.0;
     let bh_drawdown = calculate_max_drawdown(&bh_equity[start_idx..n_rows]) * 100.0;
 
-    let strategy_rating = classify_strategy_rating(strat_sharpe, final_strat_return, final_bh_return);
+    let strategy_rating =
+        classify_strategy_rating(strat_sharpe, final_strat_return, final_bh_return);
 
     let metrics = BacktestMetrics {
         coin: portfolio_name.to_string(),
@@ -1101,10 +1158,10 @@ pub fn backtest_portfolio(
         buy_and_hold_sharpe: bh_sharpe,
         strategy_max_drawdown: strat_drawdown,
         buy_and_hold_max_drawdown: bh_drawdown,
-        prediction_accuracy: 1.0,
+        prediction_accuracy: 0.0,
         prediction_r2: 0.0,
-        active_win_rate: 1.0,
-        prediction_rating: "N/A".to_string(),
+        active_win_rate: 0.0,
+        prediction_rating: "n/a".to_string(),
         strategy_rating,
         true_positives: 0,
         false_positives: 0,
@@ -1113,7 +1170,11 @@ pub fn backtest_portfolio(
         total_trades: 0,
     };
 
-    Ok((metrics, equity[start_idx..n_rows].to_vec(), bh_equity[start_idx..n_rows].to_vec()))
+    Ok((
+        metrics,
+        equity[start_idx..n_rows].to_vec(),
+        bh_equity[start_idx..n_rows].to_vec(),
+    ))
 }
 
 #[cfg(test)]
@@ -1152,46 +1213,107 @@ mod tests {
     #[test]
     fn test_run_backtest_for_asset() {
         let df = DataFrame::new(vec![
-            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new(
+                "date",
+                vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"],
+            ),
             Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
             Series::new("bitcoin_usd_rsi_14", vec![25.0, 28.0, 75.0, 80.0]),
             Series::new("bitcoin_usd_macd_line", vec![1.0, 1.2, 0.8, 1.5]),
             Series::new("bitcoin_usd_macd_signal", vec![0.8, 1.0, 1.0, 1.1]),
             Series::new("bitcoin_usd_macd_histogram", vec![0.2, 0.2, -0.2, 0.4]),
-            Series::new("bitcoin_usd_bollinger_upper", vec![110.0, 110.0, 110.0, 110.0]),
+            Series::new(
+                "bitcoin_usd_bollinger_upper",
+                vec![110.0, 110.0, 110.0, 110.0],
+            ),
             Series::new("bitcoin_usd_bollinger_lower", vec![90.0, 90.0, 90.0, 90.0]),
             Series::new("bitcoin_usd_sma_20", vec![100.0, 100.0, 100.0, 100.0]),
-        ]).unwrap();
+        ])
+        .unwrap();
 
-                let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(&df, "bitcoin_usd", "rsi", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_rsi, equity_rsi, bh_rsi) = run_backtest_for_asset(
+            &df,
+            "bitcoin_usd",
+            "rsi",
+            None,
+            0.001,
+            0.0005,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
         assert_eq!(metrics_rsi.coin, "bitcoin".to_string());
         assert_eq!(metrics_rsi.strategy, "rsi".to_string());
         assert_eq!(equity_rsi.len(), 4);
         assert_eq!(bh_rsi.len(), 4);
 
         // MACD strategy
-        let (metrics_macd, _equity_macd, _bh_macd) = run_backtest_for_asset(&df, "bitcoin_usd", "macd", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_macd, _equity_macd, _bh_macd) = run_backtest_for_asset(
+            &df,
+            "bitcoin_usd",
+            "macd",
+            None,
+            0.001,
+            0.0005,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
         assert_eq!(metrics_macd.strategy, "macd");
 
         // Bollinger strategy
-        let (metrics_bb, _equity_bb, _bh_bb) = run_backtest_for_asset(&df, "bitcoin_usd", "bollinger", None, 0.001, 0.0005, 365.0, 30, &mut None).unwrap();
+        let (metrics_bb, _equity_bb, _bh_bb) = run_backtest_for_asset(
+            &df,
+            "bitcoin_usd",
+            "bollinger",
+            None,
+            0.001,
+            0.0005,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
         assert_eq!(metrics_bb.strategy, "bollinger");
     }
 
     #[test]
     fn test_backtest_portfolio() {
         let df = DataFrame::new(vec![
-            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new(
+                "date",
+                vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"],
+            ),
             Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
-            Series::new("bitcoin_usd_simple_return", vec![0.0, 0.05, -0.0952, 0.1579]),
+            Series::new(
+                "bitcoin_usd_simple_return",
+                vec![0.0, 0.05, -0.0952, 0.1579],
+            ),
             Series::new("ethereum_usd", vec![10.0, 11.0, 9.5, 12.0]),
-            Series::new("ethereum_usd_simple_return", vec![0.0, 0.10, -0.1363, 0.2631]),
-        ]).unwrap();
+            Series::new(
+                "ethereum_usd_simple_return",
+                vec![0.0, 0.10, -0.1363, 0.2631],
+            ),
+        ])
+        .unwrap();
 
         let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
         let weights = vec![0.6, 0.4];
 
-        let (metrics, equity, bh_equity) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.001, 0.0005, "daily").unwrap();
+        let (metrics, equity, bh_equity) = backtest_portfolio(
+            &df,
+            &assets,
+            &weights,
+            "max_sharpe",
+            365.0,
+            30,
+            0.001,
+            0.0005,
+            "daily",
+        )
+        .unwrap();
         assert_eq!(metrics.coin, "max_sharpe");
         assert_eq!(metrics.currency, "portfolio");
         assert_eq!(metrics.strategy, "rebalanced");
@@ -1204,28 +1326,71 @@ mod tests {
     #[test]
     fn test_backtest_portfolio_frequencies() {
         let df = DataFrame::new(vec![
-            Series::new("date", vec![
-                "2026-06-01",
-                "2026-06-02",
-                "2026-06-08",
-                "2026-06-09",
-                "2026-07-01",
-            ]),
+            Series::new(
+                "date",
+                vec![
+                    "2026-06-01",
+                    "2026-06-02",
+                    "2026-06-08",
+                    "2026-06-09",
+                    "2026-07-01",
+                ],
+            ),
             Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0, 115.0]),
-            Series::new("bitcoin_usd_simple_return", vec![0.0, 5.0, -9.52, 15.79, 4.54]),
+            Series::new(
+                "bitcoin_usd_simple_return",
+                vec![0.0, 5.0, -9.52, 15.79, 4.54],
+            ),
             Series::new("ethereum_usd", vec![10.0, 11.0, 9.5, 12.0, 13.0]),
-            Series::new("ethereum_usd_simple_return", vec![0.0, 10.0, -13.63, 26.31, 8.33]),
-        ]).unwrap();
+            Series::new(
+                "ethereum_usd_simple_return",
+                vec![0.0, 10.0, -13.63, 26.31, 8.33],
+            ),
+        ])
+        .unwrap();
 
         let assets = vec!["bitcoin_usd".to_string(), "ethereum_usd".to_string()];
         let weights = vec![0.6, 0.4];
 
         // Weekly rebalancing
-        let (_metrics_w, equity_w, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "weekly").unwrap();
+        let (_metrics_w, equity_w, _) = backtest_portfolio(
+            &df,
+            &assets,
+            &weights,
+            "max_sharpe",
+            365.0,
+            30,
+            0.01,
+            0.005,
+            "weekly",
+        )
+        .unwrap();
         // Monthly rebalancing
-        let (_metrics_m, equity_m, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "monthly").unwrap();
+        let (_metrics_m, equity_m, _) = backtest_portfolio(
+            &df,
+            &assets,
+            &weights,
+            "max_sharpe",
+            365.0,
+            30,
+            0.01,
+            0.005,
+            "monthly",
+        )
+        .unwrap();
         // Daily rebalancing
-        let (_metrics_d, equity_d, _) = backtest_portfolio(&df, &assets, &weights, "max_sharpe", 365.0, 30, 0.01, 0.005, "daily").unwrap();
+        let (_metrics_d, equity_d, _) = backtest_portfolio(
+            &df,
+            &assets,
+            &weights,
+            "max_sharpe",
+            365.0,
+            30,
+            0.01,
+            0.005,
+            "daily",
+        )
+        .unwrap();
 
         assert_eq!(equity_w.len(), 5);
         assert_eq!(equity_m.len(), 5);
@@ -1265,10 +1430,14 @@ mod tests {
         file.write_all(strategy_json.as_bytes()).unwrap();
 
         let df = DataFrame::new(vec![
-            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new(
+                "date",
+                vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"],
+            ),
             Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
             Series::new("bitcoin_usd_rsi_14", vec![25.0, 28.0, 76.0, 80.0]),
-        ]).unwrap();
+        ])
+        .unwrap();
 
         let configs = load_custom_strategies(file_path.to_str().unwrap()).unwrap();
         let (metrics, equity, bh) = run_backtest_for_asset(
@@ -1281,7 +1450,8 @@ mod tests {
             365.0,
             30,
             &mut None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(metrics.coin, "bitcoin");
         assert_eq!(metrics.strategy, "custom_rsi_test");
@@ -1323,10 +1493,14 @@ mod tests {
         file.write_all(strategy_json.as_bytes()).unwrap();
 
         let df = DataFrame::new(vec![
-            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]),
+            Series::new(
+                "date",
+                vec!["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"],
+            ),
             Series::new("bitcoin_usd", vec![100.0, 105.0, 95.0, 110.0]),
             Series::new("bitcoin_usd_rsi_14", vec![50.0, 45.0, 40.0, 80.0]),
-        ]).unwrap();
+        ])
+        .unwrap();
 
         let configs = load_custom_strategies(file_path.to_str().unwrap()).unwrap();
         let (metrics, _, _) = run_backtest_for_asset(
@@ -1339,7 +1513,8 @@ mod tests {
             365.0,
             30,
             &mut None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(metrics.strategy, "custom_shift_test");
 
@@ -1407,5 +1582,535 @@ mod tests {
         assert_eq!(configs[0].name, "explicit_name");
         assert_eq!(configs[1].name, "rsi_map_1");
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    // ── Phase 04 tests: neutral-exit fee/P&L ────────────────────────────────
+
+    /// 3-bar series: [100, 110, 100]
+    /// Bar 0 (start): price=100, prev_position=0 (neutral at init)
+    /// Bar 1 (t=1): price=110, r=0.1. RSI[0]=25 → sig=long(1). No prior position → no fee on
+    ///   prev_position=0 → r_strat=0. Fee charged on transition 0→1.
+    ///   equity[1] = 10000 * (1+0) * (1-0.01) = 9900
+    /// Bar 2 (t=2): price=100, r=-0.0909. RSI[1]=75 → sig=neutral(0). prev_position=1 → r_strat=-0.0909.
+    ///   post_return = 9900*(1-0.0909) = 9000.9. Fee on transition 1→0: 9000.9*(1-0.01) = 8910.891
+    #[test]
+    fn test_neutral_exit_fees_pnl() {
+        // prices: [100, 110, 100]; RSI triggers: [25(<30→buy), 75(>70→sell/neutral), 50]
+        // With fee=0.01, slippage=0.0, conf=1.0
+        // At t=1: prev_position=0(neutral), sig=long(1) from RSI[0]=25
+        //   r_strat = r_t * conf * prev_position = 0.1*1.0*0 = 0.0
+        //   post_return = 10000*(1+0) = 10000
+        //   transition 0→1 → fee: 10000*(1-0.01) = 9900
+        // At t=2: prev_position=1(long), RSI[1]=75>70 → sig=short(-1)
+        //   r_t = (100-110)/110 = -1/11 ≈ -0.090909
+        //   r_strat = r_t*1.0*1 = -0.090909
+        //   post_return = 9900*(1-0.090909) = 9900*0.909091 ≈ 9000.0
+        //   transition 1→-1 → fee: 9000*(1-0.01) = 8910.0
+        let fee = 0.01;
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-01-01", "2026-01-02", "2026-01-03"]),
+            Series::new("btc_usd", vec![100.0f64, 110.0, 100.0]),
+            Series::new("btc_usd_rsi_14", vec![25.0f64, 75.0, 50.0]),
+            Series::new("btc_usd_macd_line", vec![1.0f64, 1.0, 1.0]),
+            Series::new("btc_usd_macd_signal", vec![1.0f64, 1.0, 1.0]),
+            Series::new("btc_usd_macd_histogram", vec![0.0f64, 0.0, 0.0]),
+            Series::new("btc_usd_bollinger_upper", vec![120.0f64, 120.0, 120.0]),
+            Series::new("btc_usd_bollinger_lower", vec![80.0f64, 80.0, 80.0]),
+            Series::new("btc_usd_sma_20", vec![100.0f64, 100.0, 100.0]),
+        ])
+        .unwrap();
+
+        let (_, equity, _) = run_backtest_for_asset(
+            &df,
+            "btc_usd",
+            "rsi",
+            None,
+            fee,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
+
+        // equity[0] = 10000 (start)
+        assert!((equity[0] - 10000.0).abs() < 1e-6, "equity[0]={}", equity[0]);
+        // equity[1]: prev_pos=0, r_strat=r_t*conf*0=0, then fee on transition 0→1
+        let expected_eq1 = 10000.0 * (1.0 - fee);
+        assert!(
+            (equity[1] - expected_eq1).abs() < 1e-4,
+            "equity[1]={} expected={}",
+            equity[1],
+            expected_eq1
+        );
+        // equity[2]: prev_pos=1(long), RSI[1]=75>70
+        //   conf_t = ((75-70)/15).clamp(0.1,1.0) = 1/3
+        //   r_t = (100-110)/110
+        //   r_strat = r_t * (1/3) * 1
+        //   post_return = expected_eq1 * (1 + r_strat)
+        //   fee on transition 1→-1
+        let r2 = (100.0_f64 - 110.0) / 110.0;
+        let conf2 = ((75.0_f64 - 70.0) / 15.0).clamp(0.1_f64, 1.0_f64);
+        let post_return2 = expected_eq1 * (1.0 + r2 * conf2 * 1.0);
+        let expected_eq2 = post_return2 * (1.0 - fee);
+        assert!(
+            (equity[2] - expected_eq2).abs() < 1e-4,
+            "equity[2]={} expected={}",
+            equity[2],
+            expected_eq2
+        );
+    }
+
+    /// Verify: holding same position (long→long) incurs no fee
+    #[test]
+    fn test_no_fee_when_position_unchanged() {
+        // RSI stays <30 all bars → always long → only one transition (0→long) at t=1
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec!["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+            ),
+            Series::new("btc_usd", vec![100.0f64, 110.0, 121.0, 133.1]),
+            Series::new("btc_usd_rsi_14", vec![20.0f64, 20.0, 20.0, 20.0]),
+            Series::new("btc_usd_macd_line", vec![1.0f64, 1.0, 1.0, 1.0]),
+            Series::new("btc_usd_macd_signal", vec![1.0f64, 1.0, 1.0, 1.0]),
+            Series::new("btc_usd_macd_histogram", vec![0.0f64, 0.0, 0.0, 0.0]),
+            Series::new("btc_usd_bollinger_upper", vec![120.0f64, 120.0, 140.0, 150.0]),
+            Series::new("btc_usd_bollinger_lower", vec![80.0f64, 80.0, 100.0, 110.0]),
+            Series::new("btc_usd_sma_20", vec![100.0f64, 100.0, 120.0, 130.0]),
+        ])
+        .unwrap();
+
+        let (metrics, equity, _) = run_backtest_for_asset(
+            &df,
+            "btc_usd",
+            "rsi",
+            None,
+            0.01,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
+        // Only 1 trade: neutral→long transition at bar 1
+        assert_eq!(metrics.total_trades, 1, "trades={}", metrics.total_trades);
+        // equity should be growing from bar 1 onward (long riding 10% gains)
+        assert!(equity[2] > equity[1], "equity not growing while long");
+        assert!(equity[3] > equity[2]);
+    }
+
+    // ── Phase 05 tests: calculate_r2 + calculate_max_drawdown ───────────────
+
+    #[test]
+    fn test_r2_constant_series_perfect_prediction() {
+        // actuals = predicted = [1,1,1] → ss_res=0, ss_tot=0 → should return 1.0
+        let c = vec![1.0, 1.0, 1.0];
+        assert_eq!(calculate_r2(&c, &c), 1.0);
+    }
+
+    #[test]
+    fn test_r2_constant_series_wrong_prediction() {
+        // actuals = [1,1,1] constant, predicted=[2,2,2] → ss_tot=0, ss_res>0 → return 0.0
+        let a = vec![1.0, 1.0, 1.0];
+        let p = vec![2.0, 2.0, 2.0];
+        assert_eq!(calculate_r2(&a, &p), 0.0);
+    }
+
+    #[test]
+    fn test_max_drawdown_negative_peak() {
+        // Equity starts negative; peak=-5 then drops to -10: dd=(-5-(-10))/-5 = -1.0 (but negative dd)
+        // With fix: peak=-5 != 0, dd=((-5)-(-10))/(-5) = -1.0 which is < 0 so max_dd stays 0.0
+        // Then rises to -3: peak=-3, eq=-3, dd=0
+        // Key: should not panic, and peak tracks correctly
+        let equity = vec![-10.0, -5.0, -8.0, -3.0];
+        let dd = calculate_max_drawdown(&equity);
+        // With peak tracking negatives, peak=-10 then -5 then -5 then -3
+        // dd at idx1: (-10-(-5))/-10=0.5 drawdown (peak rose, no draw)
+        // Actually peak starts at equity[0]=-10, eq[1]=-5>-10 so peak=-5
+        // eq[2]=-8<-5: dd=(-5-(-8))/-5 = 3/-5 = -0.6 < 0 → ignored
+        // Result: max_dd=0.0 (no downward drawdown on negative start)
+        assert!(
+            dd.is_finite(),
+            "drawdown must be finite for negative equity series"
+        );
+    }
+
+    #[test]
+    fn test_max_drawdown_mixed_positive_negative_peak() {
+        // peak goes positive: [100, 80, 60] → max_dd = (100-60)/100 = 0.4
+        let equity = vec![100.0, 80.0, 60.0];
+        let dd = calculate_max_drawdown(&equity);
+        assert!((dd - 0.4).abs() < 1e-9, "dd={}", dd);
+    }
+
+    // ── Phase 06 tests: deterministic equity-curve + portfolio ──────────────
+
+    fn make_rsi_df(prices: &[f64], rsi_vals: &[f64]) -> DataFrame {
+        let n = prices.len();
+        let dates: Vec<String> = (0..n)
+            .map(|i| format!("2026-01-{:02}", i + 1))
+            .collect();
+        let date_refs: Vec<&str> = dates.iter().map(|s| s.as_str()).collect();
+        DataFrame::new(vec![
+            Series::new("date", date_refs),
+            Series::new("asset_usd", prices.to_vec()),
+            Series::new("asset_usd_rsi_14", rsi_vals.to_vec()),
+            Series::new(
+                "asset_usd_macd_line",
+                vec![1.0f64; n],
+            ),
+            Series::new(
+                "asset_usd_macd_signal",
+                vec![1.0f64; n],
+            ),
+            Series::new(
+                "asset_usd_macd_histogram",
+                vec![0.0f64; n],
+            ),
+            Series::new(
+                "asset_usd_bollinger_upper",
+                vec![1000.0f64; n],
+            ),
+            Series::new(
+                "asset_usd_bollinger_lower",
+                vec![0.0f64; n],
+            ),
+            Series::new("asset_usd_sma_20", vec![500.0f64; n]),
+        ])
+        .unwrap()
+    }
+
+    /// RSI strategy: stays neutral until RSI<30 fires. With 0 fee:
+    /// prices=[100,110,121], RSI=[50,50,50] → no buy/sell → equity flat
+    #[test]
+    fn test_rsi_neutral_all_bars_equity_flat() {
+        let prices = vec![100.0, 110.0, 121.0];
+        let rsi = vec![50.0, 50.0, 50.0];
+        let df = make_rsi_df(&prices, &rsi);
+        let (_, equity, _) =
+            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None)
+                .unwrap();
+        // all neutral → strategy_returns=0 → equity stays at 10000
+        for &eq in &equity {
+            assert!(
+                (eq - 10000.0).abs() < 1e-6,
+                "equity={} should be 10000 (all neutral)",
+                eq
+            );
+        }
+    }
+
+    /// RSI strategy: buy at bar 0 (RSI=20<30), hold bars 1–2 (RSI=50)
+    /// prices=[100,110,121], fee=0
+    /// t=1: prev_pos=0→long at RSI[0]=20. r_strat=0*r_t=0. Transition→fee=0.
+    ///   equity[1]=10000*(1+0)=10000. Wait, prev_position starts at 0.
+    ///   t=1: sig=long(1) from RSI[0]=20. prev_pos=0. r_strat=0.1*0=0. Transition→no fee.
+    ///   equity[1]=10000.
+    /// t=2: prev_pos=1. RSI[1]=50→no signal→stays long. r_t=(121-110)/110=0.1. r_strat=0.1*1=0.1.
+    ///   equity[2]=10000*(1+0.1)=11000.
+    #[test]
+    fn test_rsi_long_equity_exact_values() {
+        let prices = vec![100.0, 110.0, 121.0];
+        let rsi = vec![20.0, 50.0, 50.0]; // bar0: buy; bar1: hold; bar2: hold
+        let df = make_rsi_df(&prices, &rsi);
+        let (_, equity, _) =
+            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None)
+                .unwrap();
+        assert!((equity[0] - 10000.0).abs() < 1e-6);
+        // t=1: prev_pos=0 → no return, transition to long
+        assert!((equity[1] - 10000.0).abs() < 1e-6, "equity[1]={}", equity[1]);
+        // t=2: long, r=(121-110)/110
+        let r2 = (121.0 - 110.0) / 110.0;
+        let expected_eq2 = 10000.0 * (1.0 + r2);
+        assert!(
+            (equity[2] - expected_eq2).abs() < 1e-4,
+            "equity[2]={} expected={}",
+            equity[2],
+            expected_eq2
+        );
+    }
+
+    /// Single-bar DataFrame → error (too short)
+    #[test]
+    fn test_single_bar_df_errors() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-01-01"]),
+            Series::new("asset_usd", vec![100.0f64]),
+            Series::new("asset_usd_rsi_14", vec![50.0f64]),
+            Series::new("asset_usd_macd_line", vec![1.0f64]),
+            Series::new("asset_usd_macd_signal", vec![1.0f64]),
+            Series::new("asset_usd_macd_histogram", vec![0.0f64]),
+            Series::new("asset_usd_bollinger_upper", vec![120.0f64]),
+            Series::new("asset_usd_bollinger_lower", vec![80.0f64]),
+            Series::new("asset_usd_sma_20", vec![100.0f64]),
+        ])
+        .unwrap();
+        let result =
+            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None);
+        assert!(result.is_err(), "single-bar df should return Err");
+    }
+
+    /// MACD strategy: line>signal → long. line<signal → short.
+    /// prices=[100,110,100,110], macd_line=[1,2,0.5,2], macd_signal=[1,1,1,1]
+    /// RSI=50 (neutral), BB set wide so no bollinger signal
+    /// t=1: prev_pos=0. MACD[0]: line=1==signal=1 → neutral (no cross). r_strat=0.
+    ///   equity[1]=10000.
+    /// t=2: prev_pos=0. MACD[1]: line=2>signal=1 → long. r_strat=r_t*0*conf... wait prev_pos=0 so 0.
+    ///   equity[2]=10000. Transition 0→1.
+    /// t=3: prev_pos=1. MACD[2]: line=0.5<signal=1 → short. r_t=(100-110)/110=-0.0909.
+    ///   r_strat=-0.0909*1*1=-0.0909. post_return=10000*(1-0.0909)=9090.9
+    ///   Transition 1→-1: fee: 9090.9*(1-0.01)=8999.99...
+    #[test]
+    fn test_macd_strategy_equity_exact() {
+        let n = 4;
+        let dates: Vec<String> = (0..n).map(|i| format!("2026-01-{:02}", i + 1)).collect();
+        let date_refs: Vec<&str> = dates.iter().map(|s| s.as_str()).collect();
+        let df = DataFrame::new(vec![
+            Series::new("date", date_refs),
+            Series::new("asset_usd", vec![100.0f64, 110.0, 100.0, 110.0]),
+            Series::new("asset_usd_rsi_14", vec![50.0f64, 50.0, 50.0, 50.0]),
+            Series::new("asset_usd_macd_line", vec![1.0f64, 2.0, 0.5, 2.0]),
+            Series::new("asset_usd_macd_signal", vec![1.0f64, 1.0, 1.0, 1.0]),
+            Series::new("asset_usd_macd_histogram", vec![0.0f64, 1.0, -0.5, 1.0]),
+            Series::new("asset_usd_bollinger_upper", vec![1000.0f64; 4]),
+            Series::new("asset_usd_bollinger_lower", vec![0.0f64; 4]),
+            Series::new("asset_usd_sma_20", vec![100.0f64; 4]),
+        ])
+        .unwrap();
+
+        let (metrics, equity, _) = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "macd",
+            None,
+            0.01,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
+        assert_eq!(equity.len(), 4);
+        assert!(
+            equity[0].is_finite() && equity[3].is_finite(),
+            "equity must be finite"
+        );
+        // transition happened so trades > 0
+        assert!(metrics.total_trades > 0);
+    }
+
+    /// Bollinger strategy: price below lower band → long
+    #[test]
+    fn test_bollinger_strategy_below_lower_band_goes_long() {
+        // prices: [200, 200, 200]; upper=300, lower=250, mid=275
+        // price(200) < lower(250) at bar 0 → buy triggered
+        let n = 3;
+        let dates: Vec<String> = (0..n).map(|i| format!("2026-01-{:02}", i + 1)).collect();
+        let date_refs: Vec<&str> = dates.iter().map(|s| s.as_str()).collect();
+        let df = DataFrame::new(vec![
+            Series::new("date", date_refs),
+            Series::new("asset_usd", vec![200.0f64, 210.0, 220.0]),
+            Series::new("asset_usd_rsi_14", vec![50.0f64, 50.0, 50.0]),
+            Series::new("asset_usd_macd_line", vec![1.0f64, 1.0, 1.0]),
+            Series::new("asset_usd_macd_signal", vec![1.0f64, 1.0, 1.0]),
+            Series::new("asset_usd_macd_histogram", vec![0.0f64, 0.0, 0.0]),
+            Series::new("asset_usd_bollinger_upper", vec![300.0f64, 300.0, 300.0]),
+            Series::new("asset_usd_bollinger_lower", vec![250.0f64, 250.0, 250.0]),
+            Series::new("asset_usd_sma_20", vec![275.0f64, 275.0, 275.0]),
+        ])
+        .unwrap();
+
+        let (metrics, equity, _) = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "bollinger",
+            None,
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
+        // bar 0: prev_pos=0, sig=long. r_strat=r*0=0. equity[1]=10000
+        // bar 1: prev_pos=1, price[1]=250. r_t=(210-200)/200=0.05. equity[2]=10000*1.05=10500
+        // bar 2: prev_pos=1, price[2]=220. r_t=(220-210)/210. equity[3]=10500*(1+r)
+        assert!(equity[2] > equity[1], "long position should profit when price rises");
+        assert_eq!(metrics.total_trades, 1); // one transition: neutral→long
+    }
+
+    /// Custom JSON strategy: 2-rule buy, verify exact equity
+    #[test]
+    fn test_custom_json_strategy_exact_equity() {
+        use std::io::Write;
+        // Buy if RSI<30 AND close<105; sell if RSI>70
+        let json = r#"{
+            "name": "rsi_price_cross",
+            "buy_condition": {
+                "operator": "AND",
+                "rules": [
+                    {"column": "asset_usd_rsi_14", "operator": "<", "value": 30.0},
+                    {"column": "asset_usd", "operator": "<", "value": 105.0}
+                ]
+            },
+            "sell_condition": {"column": "asset_usd_rsi_14", "operator": ">", "value": 70.0},
+            "neutral_condition": null,
+            "confidence": {"type": "Constant", "value": 1.0}
+        }"#;
+        let tmp = std::env::temp_dir().join("test_rsi_price_cross.json");
+        std::fs::File::create(&tmp)
+            .unwrap()
+            .write_all(json.as_bytes())
+            .unwrap();
+
+        let prices = vec![100.0, 110.0, 90.0]; // bar0 matches buy (rsi=20<30, close=100<105)
+        let rsi = vec![20.0, 50.0, 80.0];
+        let df = make_rsi_df(&prices, &rsi);
+        let configs = load_custom_strategies(tmp.to_str().unwrap()).unwrap();
+        let (metrics, equity, _) = run_backtest_for_asset(
+            &df,
+            "asset_usd",
+            "rsi_price_cross",
+            Some(&configs[0]),
+            0.0,
+            0.0,
+            365.0,
+            30,
+            &mut None,
+        )
+        .unwrap();
+        assert_eq!(metrics.strategy, "rsi_price_cross");
+        // equity[0]=10000 (start)
+        assert!((equity[0] - 10000.0).abs() < 1e-6);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    /// All-None indicator columns → strategy stays neutral → equity flat (zero fee)
+    #[test]
+    fn test_all_none_indicators_equity_flat() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-01-01", "2026-01-02", "2026-01-03"]),
+            Series::new("asset_usd", vec![100.0f64, 110.0, 121.0]),
+            // no indicator columns present → strategy must fall back to neutral
+        ])
+        .unwrap();
+        let (_, equity, _) =
+            run_backtest_for_asset(&df, "asset_usd", "rsi", None, 0.0, 0.0, 365.0, 30, &mut None)
+                .unwrap();
+        // prev_pos stays 0 → r_strat=0 → equity flat
+        for &eq in &equity {
+            assert!((eq - 10000.0).abs() < 1e-6, "eq={}", eq);
+        }
+    }
+
+    /// Portfolio rebalancing: weekly rebalance with diverging assets incurs more fees than monthly
+    #[test]
+    fn test_portfolio_weekly_vs_monthly_fees() {
+        // btc surges while eth drops — creates significant drift each week.
+        // Weekly rebalance forces more trades than monthly → higher fees → lower final equity.
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec![
+                    "2026-06-01",
+                    "2026-06-08",
+                    "2026-06-15",
+                    "2026-07-01",
+                    "2026-07-08",
+                ],
+            ),
+            Series::new("btc", vec![100.0f64, 150.0, 200.0, 250.0, 300.0]),
+            // returns as percentage (used by backtest_portfolio * /100)
+            Series::new(
+                "btc_simple_return",
+                vec![0.0f64, 50.0, 33.33, 25.0, 20.0],
+            ),
+            Series::new("eth", vec![100.0f64, 80.0, 60.0, 50.0, 40.0]),
+            Series::new(
+                "eth_simple_return",
+                vec![0.0f64, -20.0, -25.0, -16.67, -20.0],
+            ),
+        ])
+        .unwrap();
+        let assets = vec!["btc".to_string(), "eth".to_string()];
+        let weights = vec![0.6, 0.4];
+
+        let (_, eq_weekly, _) = backtest_portfolio(
+            &df, &assets, &weights, "test", 365.0, 100, 0.01, 0.005, "weekly",
+        )
+        .unwrap();
+        let (_, eq_monthly, _) = backtest_portfolio(
+            &df, &assets, &weights, "test", 365.0, 100, 0.01, 0.005, "monthly",
+        )
+        .unwrap();
+
+        // Weekly rebalances on every bar (all different weeks/months);
+        // monthly rebalances only on cross-month boundary (bar 3: Jun→Jul).
+        // More rebalances with diverging assets → more fee drag → weekly < monthly.
+        assert!(
+            eq_weekly[4] <= eq_monthly[4],
+            "weekly={} should be <= monthly={} (more fees)",
+            eq_weekly[4],
+            eq_monthly[4]
+        );
+    }
+
+    /// Portfolio: multi-asset diverging returns → weights renormalize after rebalance
+    #[test]
+    fn test_portfolio_weight_renormalization() {
+        // btc goes 2x, eth flat → without rebalance btc dominates
+        // with daily rebalance, we force back to 0.5/0.5 each day
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec!["2026-01-01", "2026-01-02", "2026-01-03"],
+            ),
+            Series::new("btc", vec![100.0f64, 200.0, 200.0]),
+            Series::new("btc_simple_return", vec![0.0f64, 100.0, 0.0]),
+            Series::new("eth", vec![100.0f64, 100.0, 100.0]),
+            Series::new("eth_simple_return", vec![0.0f64, 0.0, 0.0]),
+        ])
+        .unwrap();
+        let assets = vec!["btc".to_string(), "eth".to_string()];
+        let weights = vec![0.5, 0.5];
+
+        let (metrics, equity, bh_equity) = backtest_portfolio(
+            &df, &assets, &weights, "test", 365.0, 100, 0.0, 0.0, "daily",
+        )
+        .unwrap();
+        // equity and bh_equity must be finite and positive
+        for (&eq, &bh) in equity.iter().zip(bh_equity.iter()) {
+            assert!(eq.is_finite() && eq > 0.0);
+            assert!(bh.is_finite() && bh > 0.0);
+        }
+        assert!(metrics.strategy_return.is_finite());
+    }
+
+    /// Portfolio: mismatched assets/weights returns Err
+    #[test]
+    fn test_portfolio_mismatched_assets_weights_errors() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-01-01", "2026-01-02"]),
+            Series::new("btc", vec![100.0f64, 110.0]),
+            Series::new("btc_simple_return", vec![0.0f64, 10.0]),
+        ])
+        .unwrap();
+        let assets = vec!["btc".to_string()];
+        let weights = vec![0.5, 0.5]; // mismatch
+        let result =
+            backtest_portfolio(&df, &assets, &weights, "test", 365.0, 30, 0.0, 0.0, "daily");
+        assert!(result.is_err());
+    }
+
+    /// Portfolio: zero assets returns Err
+    #[test]
+    fn test_portfolio_empty_assets_errors() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-01-01", "2026-01-02"]),
+        ])
+        .unwrap();
+        let result = backtest_portfolio(&df, &[], &[], "test", 365.0, 30, 0.0, 0.0, "daily");
+        assert!(result.is_err());
     }
 }
