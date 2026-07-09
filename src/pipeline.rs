@@ -24,7 +24,28 @@ pub struct PipelineConfig<'a> {
     pub rebalance_frequency: &'a str,
 }
 
+struct AbortOnDrop {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
 pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let cancel_token_clone = cancel_token.clone();
+    let ctrlc_handle = tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        println!("\nOperation cancelled by user.");
+        cancel_token_clone.cancel();
+    });
+    let _ctrlc_guard = AbortOnDrop {
+        handle: ctrlc_handle,
+    };
+
     // Lightweight override
     if config.light {
         config.days = 30;
@@ -232,12 +253,22 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         let days_str = fetch_days.to_string();
         let raw_format_clone = raw_format.to_string();
 
+        let token = cancel_token.clone();
         join_set.spawn(async move {
+            if token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             let _permit = sem.acquire().await?;
+            if token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
 
             let cg_val = client
                 .get_coin_market_chart_range(&c, &curr, from_timestamp, to_timestamp)
                 .await?;
+            if token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             let cg_json_str = serde_json::to_string(&cg_val)?;
 
             let c_safe = crate::utils::sanitize_name(&c);
@@ -247,8 +278,14 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
 
             let price_col_name = format!("{}_{}", c_safe, curr_safe);
             let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
+            if token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
 
             let ohlc_val = client.get_coin_ohlc(&c, &curr, &days_str).await?;
+            if token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
 
             if raw_format_clone == "json" {
                 let ohlc_json_pretty = serde_json::to_string_pretty(&ohlc_val)?;
@@ -270,6 +307,9 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     }
                 }
             }
+            if token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
 
             let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
             let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
@@ -282,18 +322,29 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let mut currency_dfs = Vec::new();
     let mut currency_cols = Vec::new();
 
-    while let Some(res) = join_set.join_next().await {
-        match res {
-            Ok(Ok((df, col_name))) => {
-                pb.set_message(format!("Loaded {} rows for {}", df.height(), &col_name));
-                currency_dfs.push(df);
-                currency_cols.push(col_name);
+    loop {
+        tokio::select! {
+            res = join_set.join_next() => {
+                match res {
+                    Some(Ok(Ok((df, col_name)))) => {
+                        pb.set_message(format!("Loaded {} rows for {}", df.height(), &col_name));
+                        currency_dfs.push(df);
+                        currency_cols.push(col_name);
+                    }
+                    Some(Ok(Err(e))) => {
+                        join_set.shutdown().await;
+                        return Err(e);
+                    }
+                    Some(Err(e)) => {
+                        join_set.shutdown().await;
+                        return Err(anyhow!("Join error: {}", e));
+                    }
+                    None => break,
+                }
             }
-            Ok(Err(e)) => {
-                return Err(e);
-            }
-            Err(e) => {
-                return Err(anyhow!("Join error: {}", e));
+            _ = cancel_token.cancelled() => {
+                join_set.shutdown().await;
+                return Err(anyhow!("Operation cancelled"));
             }
         }
     }
@@ -947,6 +998,17 @@ pub async fn run_standalone_backtest(
     slippage: f64,
     _rebalance_frequency: &str,
 ) -> Result<()> {
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let cancel_token_clone = cancel_token.clone();
+    let ctrlc_handle = tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        println!("\nOperation cancelled by user.");
+        cancel_token_clone.cancel();
+    });
+    let _ctrlc_guard = AbortOnDrop {
+        handle: ctrlc_handle,
+    };
+
     println!("Starting CDG Standalone Backtester...");
     println!("Target Coin(s): {}", coin);
     println!("Currency: {}", currency);
@@ -1002,10 +1064,16 @@ pub async fn run_standalone_backtest(
 
     for c in &coins {
         for curr in &currencies {
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             println!("Ingesting historical data for {} in {}...", c, curr);
             let cg_val = cg_client
                 .get_coin_market_chart_range(c, curr, from_timestamp, to_timestamp)
                 .await?;
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             let cg_json_str = serde_json::to_string(&cg_val)?;
 
             let c_safe = crate::utils::sanitize_name(c);
@@ -1018,10 +1086,16 @@ pub async fn run_standalone_backtest(
 
             let days_str = fetch_days.to_string();
             let ohlc_val = cg_client.get_coin_ohlc(c, curr, &days_str).await?;
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
             let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
 
             let mut df = analysis::align_datasets(&df_market, &[df_ohlc], false)?;
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             df = analysis::compute_returns_and_indicators(&df, &price_col_name)?;
 
             coin_dfs.push(df);
@@ -1059,6 +1133,9 @@ pub async fn run_standalone_backtest(
     for (df, col) in coin_dfs.iter().zip(target_names.iter()) {
         let mut bh_cache = None;
         for (strat, custom_cfg) in strats.iter().zip(custom_configs.iter()) {
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Operation cancelled"));
+            }
             // Standalone run uses default annualization 365.0
             match backtest::run_backtest_for_asset(
                 df,

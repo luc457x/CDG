@@ -2,12 +2,31 @@
 
 ## Status
 
-- State: Implementing Alpha plan; Phases 01–06 implemented.
-- Last: Fixed backtest equity loop (prev_position), R²/drawdown math, removed placeholders, added 13 deterministic tests.
+- State: Implementing Alpha plan; Phases 01–07 implemented.
+- Last: Replaced std::process::exit(0) handler with CancellationToken-driven graceful shutdown on Ctrl+C.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 39: Implement Graceful Ctrl+C Shutdown
+
+- Date: 2026-07-08
+- Agent: Antigravity
+- Goal: Implement alpha phase 07 — replace Ctrl+C std::process::exit with CancellationToken graceful shutdown.
+- Constraints: None.
+- Done:
+  - **Phase 07**: Added `tokio-util` dependency in [Cargo.toml](file:///C:/Users/lucas/Code/CDG/Cargo.toml) to support `CancellationToken`.
+  - Registered Ctrl+C listener in [pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs) to trigger cancellation token on Ctrl+C during active runs.
+  - Implemented `AbortOnDrop` task guard in [pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs) to prevent listener leaks.
+  - Checked `cancel_token.is_cancelled()` inside spawned JoinSet tasks and sequential loops in `run_pipeline_flow` and `run_standalone_backtest` to exit early when cancelled.
+  - Used `tokio::select!` in the `JoinSet` polling loop of `run_pipeline_flow` to immediately detect cancellation and shutdown/abort remaining tasks.
+  - Removed global `std::process::exit` Ctrl+C spawn from [main.rs](file:///C:/Users/lucas/Code/CDG/src/main.rs), wrapping the command execution inside an `async` block to cleanly return and handle cancellation errors.
+- Blocked: None.
+- Risk: None.
+- Artifact: [Cargo.toml](file:///C:/Users/lucas/Code/CDG/Cargo.toml), [src/pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs), [src/main.rs](file:///C:/Users/lucas/Code/CDG/src/main.rs).
+- Verification: `cargo test` runs cleanly (83 passed).
+- Pending: Phase 08 (pipeline E2E test).
 
 ### Session 38: Fix Backtest Engine + Add Tests
 

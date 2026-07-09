@@ -153,13 +153,6 @@ pub enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Graceful Ctrl+C handling
-    tokio::spawn(async {
-        tokio::signal::ctrl_c().await.ok();
-        println!("\nOperation cancelled by user.");
-        std::process::exit(0);
-    });
-
     let args = Cli::parse();
 
     let output_dir = args.output_dir;
@@ -180,202 +173,213 @@ async fn main() -> Result<()> {
         .output_prefix
         .unwrap_or_else(|| format!("{}/output", output_dir));
 
-    match args.command {
-        Some(Commands::RunPipeline {
-            coin,
-            currency,
-            days,
-            prep_ml,
-            light,
-            drop_weekends,
-            seed,
-            concurrency,
-            annualization_factor,
-            backtest,
-            strategy,
-            fee,
-            slippage,
-            rebalance_frequency,
-        }) => {
-            pipeline::run_pipeline_flow(pipeline::PipelineConfig {
-                coin: &coin,
-                currency: &currency,
+    let res = async {
+        match args.command {
+            Some(Commands::RunPipeline {
+                coin,
+                currency,
                 days,
                 prep_ml,
                 light,
                 drop_weekends,
-                db_path: &db_path,
-                output_dir: &output_dir,
-                output_prefix: &output_prefix,
-                raw_format: &raw_format,
                 seed,
-                cache_ttl: args.cache_ttl,
                 concurrency,
                 annualization_factor,
                 backtest,
-                strategy: &strategy,
+                strategy,
                 fee,
                 slippage,
-                rebalance_frequency: &rebalance_frequency,
-            })
-            .await?;
-        }
-        Some(Commands::Backtest {
-            coin,
-            currency,
-            days,
-            strategy,
-            fee,
-            slippage,
-            rebalance_frequency,
-        }) => {
-            pipeline::run_standalone_backtest(
-                &db_path,
-                &output_dir,
-                &output_prefix,
-                args.cache_ttl,
-                &coin,
-                &currency,
+                rebalance_frequency,
+            }) => {
+                pipeline::run_pipeline_flow(pipeline::PipelineConfig {
+                    coin: &coin,
+                    currency: &currency,
+                    days,
+                    prep_ml,
+                    light,
+                    drop_weekends,
+                    db_path: &db_path,
+                    output_dir: &output_dir,
+                    output_prefix: &output_prefix,
+                    raw_format: &raw_format,
+                    seed,
+                    cache_ttl: args.cache_ttl,
+                    concurrency,
+                    annualization_factor,
+                    backtest,
+                    strategy: &strategy,
+                    fee,
+                    slippage,
+                    rebalance_frequency: &rebalance_frequency,
+                })
+                .await?;
+            }
+            Some(Commands::Backtest {
+                coin,
+                currency,
                 days,
-                &strategy,
+                strategy,
                 fee,
                 slippage,
-                &rebalance_frequency,
-            )
-            .await?;
-        }
-        Some(Commands::Ping) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
-            let cg_client =
-                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
-            let yahoo_client =
-                api::yahoo::YahooClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+                rebalance_frequency,
+            }) => {
+                pipeline::run_standalone_backtest(
+                    &db_path,
+                    &output_dir,
+                    &output_prefix,
+                    args.cache_ttl,
+                    &coin,
+                    &currency,
+                    days,
+                    &strategy,
+                    fee,
+                    slippage,
+                    &rebalance_frequency,
+                )
+                .await?;
+            }
+            Some(Commands::Ping) => {
+                let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
+                let cg_client =
+                    api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+                let yahoo_client =
+                    api::yahoo::YahooClient::new(cache.clone())?.with_ttl(args.cache_ttl);
 
-            println!("Pinging CoinGecko API...");
-            match cg_client.ping().await {
-                Ok(val) => println!("CoinGecko Connection: OK, response: {:?}", val),
-                Err(e) => println!("CoinGecko Connection Failed: {}", e),
-            }
+                println!("Pinging CoinGecko API...");
+                match cg_client.ping().await {
+                    Ok(val) => println!("CoinGecko Connection: OK, response: {:?}", val),
+                    Err(e) => println!("CoinGecko Connection Failed: {}", e),
+                }
 
-            println!("Pinging Yahoo Finance API...");
-            match yahoo_client.ping().await {
-                Ok(_) => println!("Yahoo Finance Connection: OK"),
-                Err(e) => println!("Yahoo Finance Connection Failed: {}", e),
-            }
-        }
-        Some(Commands::ListCoins) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
-            let cg_client =
-                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
-            println!("Fetching top 50 coins by market cap (USD)...");
-            let coins = cg_client.get_coins_markets("usd", 50).await?;
-            println!(
-                "{:<20} | {:<10} | {:<25} | {:<15} | {:<15}",
-                "ID", "Symbol", "Name", "Price (USD)", "Market Cap"
-            );
-            println!("{}", "-".repeat(95));
-            for c in &coins {
-                let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let symbol = c.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let price = c
-                    .get("current_price")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let market_cap = c.get("market_cap").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                println!(
-                    "{:<20} | {:<10} | {:<25} | {:<15.2} | {:<15.0}",
-                    id,
-                    symbol.to_uppercase(),
-                    name,
-                    price,
-                    market_cap
-                );
-            }
-        }
-        Some(Commands::Trending) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
-            let cg_client =
-                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
-            println!("Fetching trending coins...");
-            let val = cg_client.get_search_trending().await?;
-            if let Some(coins) = val.get("coins").and_then(|v| v.as_array()) {
-                println!(
-                    "{:<5} | {:<30} | {:<10} | {:<30}",
-                    "Rank", "ID", "Symbol", "Name"
-                );
-                println!("{}", "-".repeat(81));
-                for (i, c) in coins.iter().enumerate() {
-                    if let Some(item) = c.get("item") {
-                        let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let symbol = item.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                        println!("{:<5} | {:<30} | {:<10} | {:<30}", i + 1, id, symbol, name);
-                    }
+                println!("Pinging Yahoo Finance API...");
+                match yahoo_client.ping().await {
+                    Ok(_) => println!("Yahoo Finance Connection: OK"),
+                    Err(e) => println!("Yahoo Finance Connection Failed: {}", e),
                 }
-            } else {
-                println!("No trending coins found.");
             }
-        }
-        Some(Commands::Ohlcv {
-            coin,
-            currency,
-            days,
-            format,
-        }) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
-            let cg_client =
-                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
-            pipeline::run_ohlcv_flow(
-                &cg_client,
-                &coin,
-                &currency,
-                days,
-                &format,
-                &output_dir,
-                &output_prefix,
-                &raw_format,
-            )
-            .await?;
-        }
-        Some(Commands::CheckCoin { coin }) => {
-            let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
-            let cg_client =
-                api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
-            println!("Checking CoinGecko ID for '{}'...", coin);
-            match cg_client.check_coin_id(&coin).await {
-                Ok(None) => {
-                    println!("Success: '{}' is a valid CoinGecko ID.", coin);
+            Some(Commands::ListCoins) => {
+                let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
+                let cg_client =
+                    api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+                println!("Fetching top 50 coins by market cap (USD)...");
+                let coins = cg_client.get_coins_markets("usd", 50).await?;
+                println!(
+                    "{:<20} | {:<10} | {:<25} | {:<15} | {:<15}",
+                    "ID", "Symbol", "Name", "Price (USD)", "Market Cap"
+                );
+                println!("{}", "-".repeat(95));
+                for c in &coins {
+                    let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let symbol = c.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let price = c
+                        .get("current_price")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let market_cap = c.get("market_cap").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    println!(
+                        "{:<20} | {:<10} | {:<25} | {:<15.2} | {:<15.0}",
+                        id,
+                        symbol.to_uppercase(),
+                        name,
+                        price,
+                        market_cap
+                    );
                 }
-                Ok(Some(suggestions)) => {
-                    println!("Error: '{}' is not a valid CoinGecko ID.", coin);
-                    if suggestions.is_empty() {
-                        println!("No suggestions found.");
-                    } else {
-                        println!("\nSuggested IDs:");
-                        for sug in suggestions {
-                            println!(
-                                "  - {} (symbol: {}, name: {})",
-                                sug.id, sug.symbol, sug.name
-                            );
+            }
+            Some(Commands::Trending) => {
+                let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
+                let cg_client =
+                    api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+                println!("Fetching trending coins...");
+                let val = cg_client.get_search_trending().await?;
+                if let Some(coins) = val.get("coins").and_then(|v| v.as_array()) {
+                    println!(
+                        "{:<5} | {:<30} | {:<10} | {:<30}",
+                        "Rank", "ID", "Symbol", "Name"
+                    );
+                    println!("{}", "-".repeat(81));
+                    for (i, c) in coins.iter().enumerate() {
+                        if let Some(item) = c.get("item") {
+                            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let symbol = item.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+                            println!("{:<5} | {:<30} | {:<10} | {:<30}", i + 1, id, symbol, name);
                         }
                     }
-                }
-                Err(e) => {
-                    println!("Error: Failed to query CoinGecko coins list: {}", e);
+                } else {
+                    println!("No trending coins found.");
                 }
             }
+            Some(Commands::Ohlcv {
+                coin,
+                currency,
+                days,
+                format,
+            }) => {
+                let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
+                let cg_client =
+                    api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+                pipeline::run_ohlcv_flow(
+                    &cg_client,
+                    &coin,
+                    &currency,
+                    days,
+                    &format,
+                    &output_dir,
+                    &output_prefix,
+                    &raw_format,
+                )
+                .await?;
+            }
+            Some(Commands::CheckCoin { coin }) => {
+                let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
+                let cg_client =
+                    api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(args.cache_ttl);
+                println!("Checking CoinGecko ID for '{}'...", coin);
+                match cg_client.check_coin_id(&coin).await {
+                    Ok(None) => {
+                        println!("Success: '{}' is a valid CoinGecko ID.", coin);
+                    }
+                    Ok(Some(suggestions)) => {
+                        println!("Error: '{}' is not a valid CoinGecko ID.", coin);
+                        if suggestions.is_empty() {
+                            println!("No suggestions found.");
+                        } else {
+                            println!("\nSuggested IDs:");
+                            for sug in suggestions {
+                                println!(
+                                    "  - {} (symbol: {}, name: {})",
+                                    sug.id, sug.symbol, sug.name
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Error: Failed to query CoinGecko coins list: {}", e);
+                    }
+                }
+            }
+            None => {
+                ui::run_interactive_menu(
+                    &db_path,
+                    &output_dir,
+                    &output_prefix,
+                    &raw_format,
+                    args.cache_ttl,
+                )
+                .await?;
+            }
         }
-        None => {
-            ui::run_interactive_menu(
-                &db_path,
-                &output_dir,
-                &output_prefix,
-                &raw_format,
-                args.cache_ttl,
-            )
-            .await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    if let Err(e) = res {
+        if e.to_string().contains("cancelled") || e.to_string().contains("Cancelled") {
+            return Ok(());
         }
+        return Err(e);
     }
 
     Ok(())
