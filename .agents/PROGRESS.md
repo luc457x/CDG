@@ -2,8 +2,8 @@
 
 ## Status
 
-- State: Phases 01–29 implemented; `.agents/` restructure + ADR/SPEC skill refactor complete; leftover restructure edits committed.
-- Last: Committed leftover session-46 edits (AGENTS.md Stack, structure.md plans, ADR 0001/0002 → 001/002 renames) as Session 48.
+- State: All P1 alpha gaps closed (G1–G6, G12); P2/P3 gaps backlogged; 113 tests green.
+- Last: Session 49 — implemented P1 post-review gaps + backlogged untracked P2/P3 items.
 
 ## Log
 
