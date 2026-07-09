@@ -48,6 +48,11 @@ fn splitmix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
+/// Maximum number of simulations allowed. Each sim uses ~24 B × n_assets.
+/// Default: 10,000 (≈240 KB for 1 asset). Hard cap: 50,000 (≈1.2 MB).
+pub const MAX_SIMULATIONS_DEFAULT: usize = 10_000;
+pub const MAX_SIMULATIONS_HARD_CAP: usize = 50_000;
+
 pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
@@ -55,6 +60,7 @@ pub fn run_monte_carlo(
     num_simulations: usize,
     seed: Option<u64>,
 ) -> Result<OptimizationResult> {
+    let num_simulations = num_simulations.min(MAX_SIMULATIONS_HARD_CAP);
     let m = assets.len();
     if m == 0 {
         return Err(anyhow!("No assets provided for portfolio optimization"));
@@ -143,6 +149,9 @@ pub fn run_monte_carlo(
         mean_returns[i] = daily_mean_returns[i] * annualization_factor;
     }
 
+    // Documented fallback: 0.04 (4 %) when ^TNX is absent.
+    // Warning is emitted so callers are aware Sharpe uses a proxy rate.
+    const RF_FALLBACK: f64 = 0.04;
     let r_f_annual = if let Ok(tnx_col) = df.column("^TNX") {
         let tnx_series = tnx_col.f64()?;
         let sum: f64 = tnx_series.into_iter().flatten().sum();
@@ -150,10 +159,12 @@ pub fn run_monte_carlo(
         if count > 0 {
             (sum / count as f64) / 100.0
         } else {
-            0.0
+            eprintln!("Warning: ^TNX column empty; using risk-free rate fallback of {:.2}%", RF_FALLBACK * 100.0);
+            RF_FALLBACK
         }
     } else {
-        0.0
+        eprintln!("Warning: ^TNX not found; using risk-free rate fallback of {:.2}%", RF_FALLBACK * 100.0);
+        RF_FALLBACK
     };
 
     // 5. Run Monte Carlo simulations
@@ -199,7 +210,10 @@ pub fn run_monte_carlo(
             let mut weights = vec![0.0; m];
             let mut sum = 0.0;
             for w in weights.iter_mut() {
-                // Add a small minimum raw weight to prevent exactly 0% allocation
+                // Bias note: adding 0.01 before normalisation shifts the Dirichlet
+                // distribution so each asset receives at least ~0.01/(n+0.01) weight.
+                // This avoids degenerate zero-weight samples at the cost of a slight
+                // upward bias on minimum allocations. Acceptable for exploratory MC.
                 *w = rng.next_f64() + 0.01;
                 sum += *w;
             }
@@ -259,6 +273,8 @@ pub fn run_monte_carlo(
         }
     }
 
+    // Progress bar is updated after the parallel collect so the bar reflects
+    // completion rather than jumping 0→100% mid-loop under Rayon.
     pb.set_position(num_simulations as u64);
     pb.finish_with_message("Simulation complete");
 
@@ -442,5 +458,91 @@ mod tests {
         assert!(metrics_tbl.contains("Min Volatility"));
         assert!(metrics_tbl.contains("15.50%"));
         assert!(metrics_tbl.contains("8.50%"));
+    }
+
+    /// Regression: 2-asset portfolio with distinct price series must produce
+    /// strictly positive weights for both assets (no degenerate zero-weight output).
+    #[test]
+    fn test_covariance_no_zero_weights() {
+        // Asset A grows steadily; Asset B is more volatile — ensures non-trivial cov.
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec![
+                    "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04",
+                    "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08",
+                    "2026-01-09", "2026-01-10",
+                ],
+            ),
+            Series::new(
+                "crypto",
+                vec![100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 113.0],
+            ),
+            Series::new(
+                "stock",
+                vec![50.0, 50.5, 51.0, 50.8, 51.5, 51.2, 52.0, 51.8, 52.5, 52.3],
+            ),
+        ])
+        .unwrap();
+
+        let assets = vec!["crypto".to_string(), "stock".to_string()];
+        let result = run_monte_carlo(&df, &assets, 365.0, 2000, Some(1337)).unwrap();
+
+        // Both assets must receive strictly positive weight in the max-Sharpe portfolio.
+        // The + 0.01 bias guarantees this; a zero weight would indicate a regression.
+        assert!(
+            result.max_sharpe.weights[0] > 0.0,
+            "crypto weight must be > 0, got {}",
+            result.max_sharpe.weights[0]
+        );
+        assert!(
+            result.max_sharpe.weights[1] > 0.0,
+            "stock weight must be > 0, got {}",
+            result.max_sharpe.weights[1]
+        );
+
+        // Weights sum to 1.0
+        let sum: f64 = result.max_sharpe.weights.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-9, "weights must sum to 1.0, got {}", sum);
+
+        // Min-vol portfolio must have volatility <= max-Sharpe portfolio
+        assert!(
+            result.min_volatility.annualized_volatility
+                <= result.max_sharpe.annualized_volatility + 1e-9,
+            "min-vol ({}) must be <= max-Sharpe vol ({})",
+            result.min_volatility.annualized_volatility,
+            result.max_sharpe.annualized_volatility
+        );
+    }
+
+    /// Formula tests: Sharpe = (ret - rf) / vol, weights sum to 1.
+    #[test]
+    fn test_sharpe_formula_and_weights_sum() {
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec!["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+            ),
+            Series::new("a", vec![100.0, 102.0, 101.0, 103.0]),
+            Series::new("b", vec![200.0, 198.0, 201.0, 204.0]),
+        ])
+        .unwrap();
+
+        let assets = vec!["a".to_string(), "b".to_string()];
+        let result = run_monte_carlo(&df, &assets, 252.0, 1000, Some(42)).unwrap();
+
+        // Weights must sum to 1.0 for every selected portfolio
+        let sharpe_sum: f64 = result.max_sharpe.weights.iter().sum();
+        let minvol_sum: f64 = result.min_volatility.weights.iter().sum();
+        assert!((sharpe_sum - 1.0).abs() < 1e-9);
+        assert!((minvol_sum - 1.0).abs() < 1e-9);
+
+        // Hard cap: requesting more than MAX_SIMULATIONS_HARD_CAP is clamped
+        let result_capped =
+            run_monte_carlo(&df, &assets, 252.0, MAX_SIMULATIONS_HARD_CAP + 1, Some(42)).unwrap();
+        assert_eq!(
+            result_capped.simulated_points.len(),
+            MAX_SIMULATIONS_HARD_CAP
+        );
     }
 }

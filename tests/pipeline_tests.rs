@@ -1245,5 +1245,32 @@ async fn test_pipeline_flow_all_coins_fail() {
     let _ = std::fs::remove_file(db_path);
 }
 
+/// Plan 27: path-injection guard — validate_safe_path rejects traversal; sanitize_name
+/// neutralises dangerous characters before any filesystem write.
+#[test]
+fn test_path_injection_blocked_by_sanitize_and_validate() {
+    use cdg::utils::{sanitize_name, validate_safe_path};
 
+    // A malicious coin id trying to escape the run directory
+    let malicious = "../../etc/passwd";
 
+    // sanitize_name does not strip '..' — that is intentional; the guard is validate_safe_path.
+    // validate_safe_path must return Err for any path component that is ParentDir.
+    let sanitized = sanitize_name(malicious);
+
+    // Build the path as the pipeline would (ohlcv_dir/sanitized_coin)
+    let combined = format!("output/run_20260101/{}", sanitized);
+    let result = validate_safe_path(&combined);
+
+    assert!(
+        result.is_err(),
+        "validate_safe_path must reject traversal; got Ok for path: {}",
+        combined
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("Path traversal detected"),
+        "Expected 'Path traversal detected' in error, got: {}",
+        err_str
+    );
+}
