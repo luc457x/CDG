@@ -26,6 +26,7 @@ pub struct PipelineConfig<'a> {
     pub yahoo_base_url: Option<&'a str>,
     pub plots: bool,
     pub optimize: bool,
+    pub candle_stdout: bool,
 }
 
 struct AbortOnDrop {
@@ -531,6 +532,26 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                     col, e
                 ));
             }
+
+            let candle_plot_path = format!("{}/{}_candlestick.png", run_dir, col);
+            pb.set_message(format!(
+                "Saving candlestick plot for {} to: {}",
+                col, candle_plot_path
+            ));
+            if let Err(e) = plot::plot_candlestick(
+                &final_df,
+                &format!("{}_open", col),
+                &format!("{}_high", col),
+                &format!("{}_low", col),
+                &format!("{}_close", col),
+                &format!("{} Candlestick Chart", col),
+                &candle_plot_path,
+            ) {
+                pb.println(format!(
+                    "Warning: Failed to generate candlestick plot for {}: {}",
+                    col, e
+                ));
+            }
         }
 
         let perf_plot_path = format!("{}/performance.png", run_dir);
@@ -559,6 +580,14 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     }
 
     pb.finish_with_message("Data fetching and processing complete.");
+
+    if config.candle_stdout {
+        for col in &currency_cols {
+            if let Err(e) = plot::print_candlestick_stdout(&final_df, col, 80) {
+                println!("Warning: Failed to print ASCII candlestick for {}: {}", col, e);
+            }
+        }
+    }
 
     // 12. Portfolio Optimization (Markowitz Monte Carlo)
     let mut opt_res_opt = None;
@@ -846,6 +875,7 @@ pub async fn run_ohlcv_flow(
     output_dir: &str,
     output_prefix: &str,
     raw_format: &str,
+    candle_stdout: bool,
 ) -> Result<()> {
     let sanitized_coin = crate::utils::sanitize_name(coin);
     let sanitized_currency = crate::utils::sanitize_name(currency);
@@ -954,6 +984,13 @@ pub async fn run_ohlcv_flow(
             }
         }
     }
+
+    if candle_stdout {
+        let ohlc_json_str = serde_json::to_string(&ohlc_data)?;
+        let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, "temp")?;
+        plot::print_candlestick_stdout(&df_ohlc, "temp", 80)?;
+    }
+
     Ok(())
 }
 

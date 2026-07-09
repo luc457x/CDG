@@ -506,3 +506,233 @@ pub fn plot_backtest_equity(
 
     Ok(())
 }
+
+pub fn plot_candlestick(
+    df: &DataFrame,
+    open_col: &str,
+    high_col: &str,
+    low_col: &str,
+    close_col: &str,
+    title: &str,
+    output_path: &str,
+) -> Result<()> {
+    if let Some(parent) = Path::new(output_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let n_rows = df.height();
+    if n_rows == 0 {
+        return Err(anyhow!("Cannot plot empty DataFrame"));
+    }
+
+    let date_column = df.column("date")?.str()?;
+    
+    let open_series = df.column(open_col)?;
+    let high_series = df.column(high_col)?;
+    let low_series = df.column(low_col)?;
+    let close_series = df.column(close_col)?;
+
+    let open_vals: Vec<Option<f64>> = open_series.f64()?.into_iter().collect();
+    let high_vals: Vec<Option<f64>> = high_series.f64()?.into_iter().collect();
+    let low_vals: Vec<Option<f64>> = low_series.f64()?.into_iter().collect();
+    let close_vals: Vec<Option<f64>> = close_series.f64()?.into_iter().collect();
+
+    let mut y_min = f64::INFINITY;
+    let mut y_max = f64::NEG_INFINITY;
+    for i in 0..n_rows {
+        if let (Some(_o), Some(h), Some(l), Some(_c)) = (open_vals[i], high_vals[i], low_vals[i], close_vals[i]) {
+            if l < y_min { y_min = l; }
+            if h > y_max { y_max = h; }
+        }
+    }
+
+    if y_min.is_infinite() || y_max.is_infinite() {
+        return Err(anyhow!("No valid price data to plot candlestick"));
+    }
+
+    let padding = if y_max != y_min {
+        (y_max - y_min) * 0.1
+    } else {
+        1.0
+    };
+    let y_min = y_min - padding;
+    let y_max = y_max + padding;
+
+    let root = BitMapBackend::new(output_path, (1024, 768)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(title, ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(50)
+        .build_cartesian_2d(0..n_rows, y_min..y_max)?;
+
+    let label_step = (n_rows / 8).max(1);
+
+    chart
+        .configure_mesh()
+        .x_label_formatter(&|&idx| {
+            if idx < n_rows && idx % label_step == 0 {
+                date_column.get(idx).unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            }
+        })
+        .draw()?;
+
+    let green_style = GREEN.filled();
+    let red_style = RED.filled();
+
+    chart.draw_series(
+        (0..n_rows).filter_map(|idx| {
+            if let (Some(o), Some(h), Some(l), Some(c)) = (open_vals[idx], high_vals[idx], low_vals[idx], close_vals[idx]) {
+                Some(CandleStick::new(
+                    idx,
+                    o,
+                    h,
+                    l,
+                    c,
+                    green_style.clone(),
+                    red_style.clone(),
+                    6,
+                ))
+            } else {
+                None
+            }
+        })
+    )?;
+
+    Ok(())
+}
+
+pub fn print_candlestick_stdout(df: &DataFrame, col: &str, max_width: usize) -> Result<()> {
+    let n_rows = df.height();
+    if n_rows == 0 {
+        return Err(anyhow!("Cannot print empty DataFrame"));
+    }
+
+    let open_col_name = format!("{}_open", col);
+    let high_col_name = format!("{}_high", col);
+    let low_col_name = format!("{}_low", col);
+    let close_col_name = format!("{}_close", col);
+
+    let open_vals: Vec<Option<f64>> = df.column(&open_col_name)?.f64()?.into_iter().collect();
+    let high_vals: Vec<Option<f64>> = df.column(&high_col_name)?.f64()?.into_iter().collect();
+    let low_vals: Vec<Option<f64>> = df.column(&low_col_name)?.f64()?.into_iter().collect();
+    let close_vals: Vec<Option<f64>> = df.column(&close_col_name)?.f64()?.into_iter().collect();
+
+    let width = max_width.min(n_rows).max(1);
+    let bucket_size = n_rows as f64 / width as f64;
+
+    struct Candle {
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        is_rise: bool,
+    }
+
+    let mut candles = Vec::with_capacity(width);
+    for b in 0..width {
+        let start = (b as f64 * bucket_size).round() as usize;
+        let end = (((b + 1) as f64 * bucket_size).round() as usize).min(n_rows);
+        let range = start..end;
+        if range.is_empty() {
+            continue;
+        }
+
+        let mut o_val = None;
+        for i in range.clone() {
+            if let Some(v) = open_vals[i] {
+                o_val = Some(v);
+                break;
+            }
+        }
+
+        let mut c_val = None;
+        for i in range.clone().rev() {
+            if let Some(v) = close_vals[i] {
+                c_val = Some(v);
+                break;
+            }
+        }
+
+        let mut h_val = None;
+        for i in range.clone() {
+            if let Some(v) = high_vals[i] {
+                h_val = Some(h_val.map_or(v, |m: f64| m.max(v)));
+            }
+        }
+
+        let mut l_val = None;
+        for i in range.clone() {
+            if let Some(v) = low_vals[i] {
+                l_val = Some(l_val.map_or(v, |m: f64| m.min(v)));
+            }
+        }
+
+        if let (Some(open), Some(high), Some(low), Some(close)) = (o_val, h_val, l_val, c_val) {
+            candles.push(Candle {
+                open,
+                high,
+                low,
+                close,
+                is_rise: close >= open,
+            });
+        }
+    }
+
+    if candles.is_empty() {
+        return Err(anyhow!("No valid candle data after downsampling"));
+    }
+
+    let mut min_y = f64::INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for c in &candles {
+        if c.low < min_y { min_y = c.low; }
+        if c.high > max_y { max_y = c.high; }
+    }
+
+    if min_y == max_y {
+        min_y -= 1.0;
+        max_y += 1.0;
+    }
+
+    let height = 20;
+    println!("\n--- Candlestick Chart for {} ---", col);
+    for row in (0..height).rev() {
+        let price_level_high = min_y + (row + 1) as f64 * (max_y - min_y) / height as f64;
+        let price_level_low = min_y + row as f64 * (max_y - min_y) / height as f64;
+        let price_mid = (price_level_high + price_level_low) / 2.0;
+
+        print!("{:10.2} | ", price_mid);
+
+        for candle in &candles {
+            let body_min = candle.open.min(candle.close);
+            let body_max = candle.open.max(candle.close);
+
+            let in_body = price_mid >= body_min && price_mid <= body_max;
+            let in_wick = price_mid >= candle.low && price_mid <= candle.high;
+
+            let color_code = if candle.is_rise {
+                "\x1b[32m"
+            } else {
+                "\x1b[31m"
+            };
+            let reset_code = "\x1b[0m";
+
+            if in_body {
+                print!("{}{}{}", color_code, "█", reset_code);
+            } else if in_wick {
+                print!("{}{}{}", color_code, "│", reset_code);
+            } else {
+                print!(" ");
+            }
+        }
+        println!();
+    }
+    println!("--------------------------------------------------");
+    Ok(())
+}
+

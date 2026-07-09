@@ -250,6 +250,7 @@ async fn test_pipeline_flow_e2e_normal() {
         yahoo_base_url: Some(&mock_url),
         plots: true,
         optimize: true,
+        candle_stdout: false,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -305,6 +306,7 @@ async fn test_pipeline_flow_e2e_coin_404() {
         yahoo_base_url: Some(&mock_url),
         plots: true,
         optimize: true,
+        candle_stdout: false,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -431,6 +433,7 @@ async fn test_pipeline_flow_e2e_missing_tnx() {
         yahoo_base_url: Some(&mock_url),
         plots: true,
         optimize: true,
+        candle_stdout: false,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -482,6 +485,7 @@ async fn test_pipeline_flow_e2e_cache_hits() {
         yahoo_base_url: Some(&mock_url),
         plots: true,
         optimize: true,
+        candle_stdout: false,
     };
 
     let config2 = cdg::pipeline::PipelineConfig {
@@ -508,6 +512,7 @@ async fn test_pipeline_flow_e2e_cache_hits() {
         yahoo_base_url: Some(&mock_url),
         plots: true,
         optimize: true,
+        candle_stdout: false,
     };
 
     // First run
@@ -928,6 +933,7 @@ async fn test_pipeline_flow_no_plots() {
         yahoo_base_url: Some(&mock_url),
         plots: false,
         optimize: true,
+        candle_stdout: false,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -1018,6 +1024,7 @@ async fn test_pipeline_flow_no_optimize() {
         yahoo_base_url: Some(&mock_url),
         plots: false,
         optimize: false, // optimization disabled
+        candle_stdout: false,
     };
 
     let res = cdg::pipeline::run_pipeline_flow(config).await;
@@ -1075,6 +1082,7 @@ fn test_warn_light_conflicts() {
         yahoo_base_url: None,
         plots: false,
         optimize: false,
+        candle_stdout: false,
     };
     let warnings = warn_light_conflicts(&config);
     assert_eq!(warnings.len(), 2);
@@ -1099,4 +1107,86 @@ fn test_warn_light_conflicts() {
     let warnings = warn_light_conflicts(&config_ok);
     assert!(warnings.is_empty());
 }
+
+#[test]
+fn test_plot_candlestick_and_stdout() {
+    use polars::prelude::*;
+    use std::fs::File;
+    use std::io::Read;
+
+    let dates = Series::new("date", vec!["2024-07-01", "2024-07-02", "2024-07-03"]);
+    let opens = Series::new("btc_usd_open", vec![100.0, 105.0, 95.0]);
+    let highs = Series::new("btc_usd_high", vec![110.0, 115.0, 105.0]);
+    let lows = Series::new("btc_usd_low", vec![90.0, 100.0, 90.0]);
+    let closes = Series::new("btc_usd_close", vec![105.0, 95.0, 100.0]);
+
+    let df = DataFrame::new(vec![dates, opens, highs, lows, closes]).unwrap();
+
+    let temp_dir = std::env::temp_dir();
+    let img_path = temp_dir.join("test_candle.png");
+    let img_path_str = img_path.to_str().unwrap();
+
+    let res = cdg::plot::plot_candlestick(
+        &df,
+        "btc_usd_open",
+        "btc_usd_high",
+        "btc_usd_low",
+        "btc_usd_close",
+        "Test Candlestick Chart",
+        img_path_str,
+    );
+    assert!(res.is_ok());
+
+    let mut file = File::open(img_path_str).unwrap();
+    let mut signature = [0u8; 8];
+    file.read_exact(&mut signature).unwrap();
+    assert_eq!(signature, [137, 80, 78, 71, 13, 10, 26, 10]);
+
+    let _ = std::fs::remove_file(img_path_str);
+
+    let stdout_res = cdg::plot::print_candlestick_stdout(&df, "btc_usd", 80);
+    assert!(stdout_res.is_ok());
+
+    let bad_res = cdg::plot::plot_candlestick(
+        &df,
+        "missing_open",
+        "btc_usd_high",
+        "btc_usd_low",
+        "btc_usd_close",
+        "Test Chart",
+        img_path_str,
+    );
+    assert!(bad_res.is_err());
+
+    let bad_stdout = cdg::plot::print_candlestick_stdout(&df, "missing_coin", 80);
+    assert!(bad_stdout.is_err());
+}
+
+#[test]
+fn test_print_candlestick_stdout_flat_and_single_row() {
+    use polars::prelude::*;
+
+    let df_single = DataFrame::new(vec![
+        Series::new("date", vec!["2024-07-01"]),
+        Series::new("btc_usd_open", vec![100.0]),
+        Series::new("btc_usd_high", vec![100.0]),
+        Series::new("btc_usd_low", vec![100.0]),
+        Series::new("btc_usd_close", vec![100.0]),
+    ]).unwrap();
+
+    let res_single = cdg::plot::print_candlestick_stdout(&df_single, "btc_usd", 80);
+    assert!(res_single.is_ok());
+
+    let df_flat = DataFrame::new(vec![
+        Series::new("date", vec!["2024-07-01", "2024-07-02"]),
+        Series::new("btc_usd_open", vec![100.0, 100.0]),
+        Series::new("btc_usd_high", vec![100.0, 100.0]),
+        Series::new("btc_usd_low", vec![100.0, 100.0]),
+        Series::new("btc_usd_close", vec![100.0, 100.0]),
+    ]).unwrap();
+
+    let res_flat = cdg::plot::print_candlestick_stdout(&df_flat, "btc_usd", 80);
+    assert!(res_flat.is_ok());
+}
+
 

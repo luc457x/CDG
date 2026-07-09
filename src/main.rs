@@ -104,6 +104,10 @@ pub enum Commands {
         /// Disable portfolio optimization (overrides --optimize)
         #[arg(long)]
         no_optimize: bool,
+
+        /// Print ASCII candlestick chart to stdout
+        #[arg(long)]
+        candle_stdout: bool,
     },
     /// Retrieve and backtest strategy on a coin
     Backtest {
@@ -170,6 +174,10 @@ pub enum Commands {
         /// Export format: 'stdout', 'csv', or 'json' (default: stdout)
         #[arg(short, long, default_value = "stdout")]
         format: String,
+
+        /// Print ASCII candlestick chart to stdout
+        #[arg(long)]
+        candle_stdout: bool,
     },
     /// Check if a coin name is a valid ID and show suggestions
     CheckCoin {
@@ -222,6 +230,7 @@ async fn main() -> Result<()> {
                 no_plots,
                 optimize,
                 no_optimize,
+                candle_stdout,
             }) => {
                 let plots_effective = plots && !no_plots;
                 let optimize_effective = optimize && !no_optimize;
@@ -249,6 +258,7 @@ async fn main() -> Result<()> {
                     yahoo_base_url: None,
                     plots: plots_effective,
                     optimize: optimize_effective,
+                    candle_stdout,
                 })
                 .await?;
             }
@@ -360,6 +370,7 @@ async fn main() -> Result<()> {
                 currency,
                 days,
                 format,
+                candle_stdout,
             }) => {
                 let cache = std::sync::Arc::new(cache::Cache::new(&db_path).await?);
                 let cg_client =
@@ -373,6 +384,7 @@ async fn main() -> Result<()> {
                     &output_dir,
                     &output_prefix,
                     &raw_format,
+                    candle_stdout,
                 )
                 .await?;
             }

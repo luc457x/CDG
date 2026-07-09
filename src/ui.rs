@@ -223,6 +223,7 @@ pub async fn run_interactive_menu(
                     yahoo_base_url: None,
                     plots: true,
                     optimize: true,
+                    candle_stdout: false,
                 })
                 .await
                 {
@@ -336,6 +337,7 @@ pub async fn run_interactive_menu(
                     output_dir,
                     output_prefix,
                     raw_format,
+                    false,
                 )
                 .await
                 {
