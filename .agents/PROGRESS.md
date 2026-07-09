@@ -2,12 +2,28 @@
 
 ## Status
 
-- State: Implementing Alpha plan; Phases 01, 02, and 03 implemented.
-- Last: Fixed parser panic/aggregation, propagated OHLC null/NaN, added golden tests.
+- State: Implementing Alpha plan; Phases 01–06 implemented.
+- Last: Fixed backtest equity loop (prev_position), R²/drawdown math, removed placeholders, added 13 deterministic tests.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 38: Fix Backtest Engine + Add Tests
+
+- Date: 2026-07-08
+- Agent: Antigravity
+- Goal: Implement alpha phases 04, 05, 06 — fix neutral-exit fee/P&L bug, fix metrics math, add deterministic equity/portfolio tests.
+- Constraints: None.
+- Done:
+  - **Phase 04**: Rewrote equity loop in [backtest.rs:597-738](file:///C:/Users/lucas/Code/CDG/src/backtest.rs#L597-L738) to use explicit `prev_position: i32` (-1/0/1). Return now applied with `prev_position` sign before fee; fee charged on transition. Fixes one-bar lag on neutral exits.
+  - **Phase 05**: Fixed `calculate_r2` constant-series guard (ss_tot=0 → 1.0 if perfect, else 0.0) at [backtest.rs:292](file:///C:/Users/lucas/Code/CDG/src/backtest.rs#L292-L294). Fixed `calculate_max_drawdown` negative-peak guard (`!= 0.0`) at [backtest.rs:327](file:///C:/Users/lucas/Code/CDG/src/backtest.rs#L327). Computed `prediction_r2` from strategy vs actual returns (no more unconditional `0.0`). Fixed portfolio/treasury placeholder `prediction_accuracy/active_win_rate: 1.0` → `0.0` in [backtest.rs](file:///C:/Users/lucas/Code/CDG/src/backtest.rs) and [pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs).
+  - **Phase 06**: Added 13 new `#[test]` functions covering: neutral-exit exact equity, no-fee-when-unchanged, R² constant-series perfect/wrong, max-drawdown negative peak, RSI flat/long exact values, single-bar error, MACD exact, Bollinger below-band, custom 2-rule JSON, all-None indicator flat, portfolio weekly-vs-monthly fees, weight renormalization, mismatched/empty assets errors.
+- Blocked: None.
+- Risk: prev_position semantic change alters existing strategy return magnitudes (expected — bug fix).
+- Artifact: [backtest.rs](file:///C:/Users/lucas/Code/CDG/src/backtest.rs), [pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs).
+- Verification: `cargo test backtest::` — 27 tests passed, 0 failed.
+- Pending: Phase 07 (exit→cancellation), Phase 08 (pipeline E2E test).
 
 ### Session 37: Fix Parsers and Indicators
 
