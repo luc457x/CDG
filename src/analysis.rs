@@ -1819,4 +1819,212 @@ mod tests {
         let rsi = calculate_rsi(&prices, 3);
         assert!(rsi[3].unwrap().is_nan());
     }
+
+    #[test]
+    fn test_weekend_alignment_t1() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock", vec![50.0, 52.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], true).unwrap();
+        
+        assert_eq!(aligned.height(), 2);
+        
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-08"));
+        
+        let stock_col = aligned.column("stock").unwrap().f64().unwrap();
+        assert_eq!(stock_col.get(0), Some(50.0));
+        assert_eq!(stock_col.get(1), Some(52.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t2() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock", vec![50.0, 52.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], false).unwrap();
+        
+        assert_eq!(aligned.height(), 4);
+        
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-06"));
+        assert_eq!(date_col.get(2), Some("2026-06-07"));
+        assert_eq!(date_col.get(3), Some("2026-06-08"));
+        
+        let stock_col = aligned.column("stock").unwrap().f64().unwrap();
+        assert_eq!(stock_col.get(0), Some(50.0));
+        assert_eq!(stock_col.get(1), Some(50.0));
+        assert_eq!(stock_col.get(2), Some(50.0));
+        assert_eq!(stock_col.get(3), Some(52.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t3() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock_volume", vec![1000.0, 1200.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], false).unwrap();
+        
+        assert_eq!(aligned.height(), 4);
+        
+        let vol_col = aligned.column("stock_volume").unwrap().f64().unwrap();
+        assert_eq!(vol_col.get(0), Some(1000.0));
+        assert_eq!(vol_col.get(1), Some(0.0));
+        assert_eq!(vol_col.get(2), Some(0.0));
+        assert_eq!(vol_col.get(3), Some(1200.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t4() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0, 104.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-09"]),
+            Series::new("stock", vec![50.0, 52.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], true).unwrap();
+
+        assert_eq!(aligned.height(), 3);
+
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-08"));
+        assert_eq!(date_col.get(2), Some("2026-06-09"));
+
+        let stock_col = aligned.column("stock").unwrap().f64().unwrap();
+        assert_eq!(stock_col.get(0), Some(50.0));
+        assert_eq!(stock_col.get(1), Some(50.0));
+        assert_eq!(stock_col.get(2), Some(52.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t5() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "not-a-date"]),
+            Series::new("crypto", vec![100.0, 101.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[], true).unwrap();
+        assert_eq!(aligned.height(), 2);
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("not-a-date"));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t6() {
+        let mut prices = Vec::new();
+        let start_ts = 1780617600000i64;
+        for i in 0..7 {
+            let ts = start_ts + i * 86400000;
+            prices.push(format!("[{}, {}]", ts, 100.0 + i as f64));
+        }
+        let json_data = format!(
+            r#"{{"prices": [{}], "total_volumes": []}}"#,
+            prices.join(",")
+        );
+
+        let df = parse_coingecko_market_chart(&json_data, "crypto").unwrap();
+        assert_eq!(df.height(), 7);
+
+        let date_col = df.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-06"));
+        assert_eq!(date_col.get(2), Some("2026-06-07"));
+        assert_eq!(date_col.get(3), Some("2026-06-08"));
+        assert_eq!(date_col.get(4), Some("2026-06-09"));
+        assert_eq!(date_col.get(5), Some("2026-06-10"));
+        assert_eq!(date_col.get(6), Some("2026-06-11"));
+    }
+
+    #[test]
+    fn test_weekend_fill_t12a() {
+        let crypto_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![10.0, 10.5, 11.0, 11.5]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock", vec![100.0, 102.0]),
+            Series::new("stock_volume", vec![1000.0, 1200.0]),
+        ]).unwrap();
+
+        let aligned_no_drop = align_datasets(&crypto_df, &[stock_df.clone()], false).unwrap();
+        assert_eq!(aligned_no_drop.height(), 4);
+        
+        let stock_col = aligned_no_drop.column("stock").unwrap().f64().unwrap();
+        let vol_col = aligned_no_drop.column("stock_volume").unwrap().f64().unwrap();
+        
+        assert_eq!(stock_col.get(0), Some(100.0));
+        assert_eq!(vol_col.get(0), Some(1000.0));
+        assert_eq!(stock_col.get(1), Some(100.0));
+        assert_eq!(vol_col.get(1), Some(0.0));
+        assert_eq!(stock_col.get(2), Some(100.0));
+        assert_eq!(vol_col.get(2), Some(0.0));
+        assert_eq!(stock_col.get(3), Some(102.0));
+        assert_eq!(vol_col.get(3), Some(1200.0));
+
+        let aligned_drop = align_datasets(&crypto_df, &[stock_df], true).unwrap();
+        assert_eq!(aligned_drop.height(), 2);
+        
+        let stock_col_d = aligned_drop.column("stock").unwrap().f64().unwrap();
+        let vol_col_d = aligned_drop.column("stock_volume").unwrap().f64().unwrap();
+        let date_col_d = aligned_drop.column("date").unwrap().str().unwrap();
+        
+        assert_eq!(date_col_d.get(0), Some("2026-06-05"));
+        assert_eq!(stock_col_d.get(0), Some(100.0));
+        assert_eq!(vol_col_d.get(0), Some(1000.0));
+        
+        assert_eq!(date_col_d.get(1), Some("2026-06-08"));
+        assert_eq!(stock_col_d.get(1), Some(102.0));
+        assert_eq!(vol_col_d.get(1), Some(1200.0));
+    }
+
+    #[test]
+    fn test_weekend_fill_t12b() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07"]),
+            Series::new("crypto", vec![10.0, 11.0, 12.0]),
+        ]).unwrap();
+
+        let other_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-07"]),
+            Series::new("stock_volume", vec![1000.0, 1500.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[other_df], false).unwrap();
+        let vol_col = aligned.column("stock_volume").unwrap().f64().unwrap();
+        
+        assert_eq!(vol_col.get(0), Some(1000.0));
+        assert_eq!(vol_col.get(1), Some(0.0));
+        assert_eq!(vol_col.get(2), Some(1500.0));
+    }
 }

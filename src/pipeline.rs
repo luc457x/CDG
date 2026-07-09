@@ -38,6 +38,23 @@ impl Drop for AbortOnDrop {
     }
 }
 
+pub fn warn_light_conflicts(config: &PipelineConfig<'_>) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if config.light {
+        if config.days != 30 {
+            warnings.push(format!("--light overrides --days {} -> 30", config.days));
+        }
+        let coin_count = config.coin.split(',').filter(|c| !c.is_empty()).count();
+        if coin_count > 1 {
+            warnings.push(format!(
+                "--light expects a single coin; {} supplied, only first used",
+                coin_count
+            ));
+        }
+    }
+    warnings
+}
+
 pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
@@ -50,9 +67,15 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         handle: ctrlc_handle,
     };
 
+    let warnings = warn_light_conflicts(&config);
+
     // Lightweight override
     if config.light {
         config.days = 30;
+    }
+
+    for warning in &warnings {
+        eprintln!("{}", warning);
     }
 
     let coin = config.coin;

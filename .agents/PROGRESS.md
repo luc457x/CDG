@@ -2,12 +2,28 @@
 
 ## Status
 
-- State: Implementing Alpha plan; Phases 01–15 implemented.
-- Last: Implemented ambiguous coin resolution enum/caching optimization and plots/optimization toggles.
+- State: Implementing Alpha plan; Phases 01–18 implemented.
+- Last: Implemented --light conflict warnings and weekend alignment/fill regression tests.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 43: Implement --light Warnings & Weekend Tests
+
+- Date: 2026-07-09
+- Agent: Antigravity
+- Goal: Implement alpha phases 16-18.
+- Constraints: None.
+- Done:
+  - **Phase 16**: Added `pub fn warn_light_conflicts` in [src/pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs) to check `--light` conflicts and print warnings via `eprintln!` in `run_pipeline_flow`. Removed misleading "forces coin=bitcoin" from `--light` docstring in [src/main.rs](file:///C:/Users/lucas/Code/CDG/src/main.rs). Added `test_warn_light_conflicts` in [tests/pipeline_tests.rs](file:///C:/Users/lucas/Code/CDG/tests/pipeline_tests.rs).
+  - **Phase 17**: Added tests `test_weekend_alignment_t1` through `test_weekend_alignment_t6` in [src/analysis.rs](file:///C:/Users/lucas/Code/CDG/src/analysis.rs) validating weekend alignment and drop logic.
+  - **Phase 18**: Added tests `test_weekend_fill_t12a` and `test_weekend_fill_t12b` in [src/analysis.rs](file:///C:/Users/lucas/Code/CDG/src/analysis.rs) validating weekend volume zero-fill.
+- Blocked: None.
+- Risk: None.
+- Artifact: [src/pipeline.rs](file:///C:/Users/lucas/Code/CDG/src/pipeline.rs), [src/main.rs](file:///C:/Users/lucas/Code/CDG/src/main.rs), [src/analysis.rs](file:///C:/Users/lucas/Code/CDG/src/analysis.rs), [tests/pipeline_tests.rs](file:///C:/Users/lucas/Code/CDG/tests/pipeline_tests.rs).
+- Verification: `cargo test` - 102 passed.
+- Pending: None.
 
 ### Session 42: Implement Ambiguity & Optimization Toggles
 

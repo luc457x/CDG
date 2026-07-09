@@ -49,7 +49,7 @@ pub enum Commands {
         #[arg(long)]
         prep_ml: bool,
 
-        /// Enable lightweight mode (forces coin=bitcoin, days=30, skips benchmarks)
+        /// Enable lightweight mode (forces days=30, skips benchmarks)
         #[arg(long)]
         light: bool,
 

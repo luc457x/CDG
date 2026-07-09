@@ -1045,3 +1045,58 @@ async fn test_pipeline_flow_no_optimize() {
 
     cleanup_test_files(db_path, output_dir);
 }
+
+#[test]
+fn test_warn_light_conflicts() {
+    use cdg::pipeline::{warn_light_conflicts, PipelineConfig};
+
+    // Case 1: light=true, days=90, multi-coin -> should warn for both
+    let config = PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 90,
+        prep_ml: false,
+        light: true,
+        drop_weekends: false,
+        db_path: "dummy",
+        output_dir: "dummy",
+        output_prefix: "dummy",
+        raw_format: "json",
+        seed: None,
+        cache_ttl: 300,
+        concurrency: None,
+        annualization_factor: None,
+        backtest: false,
+        strategy: "rsi",
+        fee: 0.0,
+        slippage: 0.0,
+        rebalance_frequency: "daily",
+        coingecko_base_url: None,
+        yahoo_base_url: None,
+        plots: false,
+        optimize: false,
+    };
+    let warnings = warn_light_conflicts(&config);
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[0].contains("overrides --days 90 -> 30"));
+    assert!(warnings[1].contains("expects a single coin; 2 supplied"));
+
+    // Case 2: light=false -> no warnings
+    let config_no_light = PipelineConfig {
+        light: false,
+        ..config
+    };
+    let warnings = warn_light_conflicts(&config_no_light);
+    assert!(warnings.is_empty());
+
+    // Case 3: light=true, days=30, single coin -> no warnings
+    let config_ok = PipelineConfig {
+        coin: "bitcoin",
+        days: 30,
+        light: true,
+        ..config
+    };
+    let warnings = warn_light_conflicts(&config_ok);
+    assert!(warnings.is_empty());
+}
+
