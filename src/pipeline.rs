@@ -503,10 +503,10 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let parquet_path = format!("{}/data.parquet", run_dir);
 
     pb.set_message(format!("Saving CSV to: {}", csv_path));
-    export::export_csv(&mut final_df, &csv_path)?;
+    export::export_csv(&final_df, &csv_path)?;
 
     pb.set_message(format!("Saving Parquet to: {}", parquet_path));
-    export::export_parquet(&mut final_df, &parquet_path)?;
+    export::export_parquet(&final_df, &parquet_path)?;
 
     // 11. Plotting
     if config.plots && !light {
