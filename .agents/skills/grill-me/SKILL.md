@@ -53,10 +53,4 @@ When business rule, requirement, or scope boundary resolved during interview, up
 
 ## ADRs
 
-Only offer to create ADR in `.agents/docs/ADRs/` when all three are true:
-
-1. **Hard to reverse** — cost of changing mind later is meaningful
-2. **Surprising without context** — future reader will wonder "why did they do it this way?"
-3. **Result of real trade-off** — genuine alternatives existed and one was picked for specific reasons
-
-If any of the three missing, skip ADR.
+Offer to create ADR in `.agents/docs/ADRs/` only when decision gate met. Gate rules live in `adr` skill — load it to decide and author. Do NOT duplicate gate here. If gate not met, skip ADR.

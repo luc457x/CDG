@@ -2,12 +2,29 @@
 
 ## Status
 
-- State: Phases 01–29 implemented; `.agents/` folder structure refactor complete; references aligned to new paths.
-- Last: Updated stale `.agents/adr/`, `.agents/etc/`, and `.agents/personas/` references to match renamed folders (`docs/ADRs/`, `plans/`, `agents/`).
+- State: Phases 01–29 implemented; ADR + SPEC alignment rules refactored into `adr` and `spec-align` skills as single source of truth.
+- Last: Created `adr` skill (template + decision-gate) and `spec-align` skill; removed duplicated ADR gate from `grill-me`; deleted loose `000_TEMPLATE.md`.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 47: Refactor ADR & Spec Rules into Skills
+
+- Date: 2026-07-09
+- Agent: Antigravity
+- Goal: Move ADR decision-gate/template and SPEC.md alignment rules into dedicated skills as single source of truth.
+- Constraints: None.
+- Done:
+  - Created `.agents/skills/adr/SKILL.md` — embedded ADR template + decision-gate (hard-to-reverse, surprising, real trade-off); canonical source for when to write ADR in `.agents/docs/ADRs/`.
+  - Deleted `.agents/docs/ADRs/000_TEMPLATE.md` — template content moved into `adr` skill.
+  - Updated `.agents/skills/grill-me/SKILL.md` — replaced duplicated ADR gate (old lines 54-62) with pointer to `adr` skill; removed drift risk.
+  - Created `.agents/skills/spec-align/SKILL.md` — planning/SDD gate: aligned tasks → implement via `stdd`; unaligned → `spec-triage` (backlog/spec). References existing `spec-triage`, no routing logic duplicated.
+- Blocked: None.
+- Risk: None — skill/docs only; `spec-triage` remains routing source of truth.
+- Artifact: `.agents/skills/adr/SKILL.md`, `.agents/skills/spec-align/SKILL.md`, `.agents/skills/grill-me/SKILL.md`.
+- Verification: `python .agents/skills/audit-skills/scripts/audit_skills.py --skill adr` and `--skill spec-align` — both pass clean (0 structural issues, 0 broken links).
+- Pending: None.
 
 ### Session 46: Fix Stale Path References
 
