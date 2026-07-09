@@ -19,6 +19,7 @@ pub struct CoinGeckoClient {
     demo_key: Option<String>,
     pro_key: Option<String>,
     pb: Option<indicatif::ProgressBar>,
+    retry_delay_ms: u64,
 }
 
 impl CoinGeckoClient {
@@ -45,6 +46,7 @@ impl CoinGeckoClient {
         Ok(Self {
             client: Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .timeout(std::time::Duration::from_secs(30))
                 .build()?,
             cache,
             base_url,
@@ -52,6 +54,7 @@ impl CoinGeckoClient {
             demo_key,
             pro_key,
             pb: None,
+            retry_delay_ms: 10000,
         })
     }
 
@@ -67,6 +70,11 @@ impl CoinGeckoClient {
 
     pub fn with_base_url(mut self, base_url: String) -> Self {
         self.base_url = base_url;
+        self
+    }
+
+    pub fn with_retry_delay_ms(mut self, ms: u64) -> Self {
+        self.retry_delay_ms = ms;
         self
     }
 
@@ -94,7 +102,7 @@ impl CoinGeckoClient {
 
         let mut attempts = 0;
         let max_attempts = 4;
-        let mut retry_delay = std::time::Duration::from_millis(10000);
+        let mut retry_delay = std::time::Duration::from_millis(self.retry_delay_ms);
 
         loop {
             // Fetch from API using reqwest's built-in query encoding
@@ -106,20 +114,51 @@ impl CoinGeckoClient {
                 request_builder = request_builder.header("x-cg-pro-api-key", key);
             }
 
-            let response = request_builder.send().await?;
+            let response = match request_builder.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    // Retry on timeout or connection errors
+                    let is_retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                    attempts += 1;
+                    if !is_retryable || attempts >= max_attempts {
+                        return Err(anyhow!(
+                            "CoinGecko request failed after {} attempt(s): {}",
+                            attempts,
+                            e
+                        ));
+                    }
+                    let msg = format!(
+                        "Warning: CoinGecko network error: {}. Retrying in {:.1}s... (Attempt {}/{})",
+                        e,
+                        retry_delay.as_secs_f32(),
+                        attempts,
+                        max_attempts
+                    );
+                    if let Some(ref pb) = self.pb {
+                        pb.set_message(msg);
+                    } else {
+                        eprintln!("{}", msg);
+                    }
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay *= 2;
+                    continue;
+                }
+            };
 
             let status = response.status();
 
-            if status == 429 {
+            if status == 429 || status.is_server_error() {
                 attempts += 1;
                 if attempts >= max_attempts {
                     return Err(anyhow!(
-                        "CoinGecko API Rate Limit Exceeded (429) after {} attempts",
+                        "CoinGecko API returned {} after {} attempts",
+                        status,
                         max_attempts
                     ));
                 }
                 let msg = format!(
-                    "Warning: CoinGecko API Rate Limit Exceeded (429). Retrying in {:.1}s... (Attempt {}/{})",
+                    "Warning: CoinGecko API returned {}. Retrying in {:.1}s... (Attempt {}/{})",
+                    status,
                     retry_delay.as_secs_f32(),
                     attempts,
                     max_attempts
@@ -170,8 +209,20 @@ impl CoinGeckoClient {
     }
 
     pub async fn get_coins_list(&self) -> Result<Vec<Value>> {
-        let res = self.get_request("/coins/list", &[], true).await?;
-        Ok(serde_json::from_str(&res)?)
+        // /coins/list is static-ish; cache with 24h TTL regardless of client default.
+        const COINS_LIST_TTL: i64 = 86400;
+        let endpoint = "/coins/list";
+        let base_endpoint = format!("{}{}", self.base_url, endpoint);
+
+        // Check cache first with 24h TTL
+        if let Some(cached) = self.cache.get(&base_endpoint, COINS_LIST_TTL).await? {
+            return Ok(serde_json::from_str(&cached)?);
+        }
+
+        // Not cached — perform network request (reuse get_request with cache disabled, then store manually)
+        let body = self.get_request(endpoint, &[], false).await?;
+        self.cache.insert(&base_endpoint, &body).await?;
+        Ok(serde_json::from_str(&body)?)
     }
 
     pub async fn get_global(&self) -> Result<Value> {
