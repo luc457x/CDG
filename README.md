@@ -118,7 +118,7 @@ For automation and scripting, the following subcommands are supported:
 | | `--db-path` | SQLite cache database file path | `{output_dir}/cache.db` |
 | `-o` | `--output-prefix` | Output file path prefix | `{output_dir}/output` |
 | | `--raw-format` | Raw OHLCV export format (`json` or `csv`) | `json` (or `CDG_RAW_FORMAT` env) |
-| | `--seed` | Optional RNG seed for deterministic Monte Carlo simulation | `None` |
+| | `--seed` | Optional RNG seed for deterministic Monte Carlo simulation | `1337` |
 | | `--concurrency` | CoinGecko query concurrency limit (default: 1 for demo/free keys, 3 for pro keys) | `None` |
 | | `--annualization-factor` | Override annualization factor for returns/volatility (default: 252 if `--drop-weekends`, else 365) | `None` |
 | | `--backtest` | Run strategy and portfolio backtesting | `false` |
