@@ -219,6 +219,8 @@ pub async fn run_interactive_menu(
                     fee,
                     slippage,
                     rebalance_frequency: &rebalance_frequency,
+                    coingecko_base_url: None,
+                    yahoo_base_url: None,
                 })
                 .await
                 {

@@ -31,4 +31,7 @@ debug = false
 codegen-units = 1
 debug = false
 
+[dev-dependencies]
+wiremock = "0.6.5"
+
 

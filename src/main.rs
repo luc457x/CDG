@@ -211,6 +211,8 @@ async fn main() -> Result<()> {
                     fee,
                     slippage,
                     rebalance_frequency: &rebalance_frequency,
+                    coingecko_base_url: None,
+                    yahoo_base_url: None,
                 })
                 .await?;
             }

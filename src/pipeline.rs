@@ -22,6 +22,8 @@ pub struct PipelineConfig<'a> {
     pub fee: f64,
     pub slippage: f64,
     pub rebalance_frequency: &'a str,
+    pub coingecko_base_url: Option<&'a str>,
+    pub yahoo_base_url: Option<&'a str>,
 }
 
 struct AbortOnDrop {
@@ -118,8 +120,14 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
     let cache = std::sync::Arc::new(cache::Cache::new(db_path).await?);
 
     // 2. Initialize Clients
-    let cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(cache_ttl);
-    let yahoo_client = api::yahoo::YahooClient::new(cache.clone())?.with_ttl(cache_ttl);
+    let mut cg_client = api::coingecko::CoinGeckoClient::new(cache.clone())?.with_ttl(cache_ttl);
+    if let Some(url) = config.coingecko_base_url {
+        cg_client = cg_client.with_base_url(url.to_string());
+    }
+    let mut yahoo_client = api::yahoo::YahooClient::new(cache.clone())?.with_ttl(cache_ttl);
+    if let Some(url) = config.yahoo_base_url {
+        yahoo_client = yahoo_client.with_base_url(url.to_string());
+    }
 
     // 3. Ping CoinGecko
     match cg_client.ping().await {
@@ -263,9 +271,19 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
                 return Err(anyhow!("Operation cancelled"));
             }
 
-            let cg_val = client
+            let cg_val = match client
                 .get_coin_market_chart_range(&c, &curr, from_timestamp, to_timestamp)
-                .await?;
+                .await
+            {
+                Ok(val) => val,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to fetch market chart for {}-{}: {}. Skipping coin.",
+                        c, curr, e
+                    );
+                    return Ok(None);
+                }
+            };
             if token.is_cancelled() {
                 return Err(anyhow!("Operation cancelled"));
             }
@@ -277,12 +295,31 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             crate::utils::validate_safe_path(&curr_safe)?;
 
             let price_col_name = format!("{}_{}", c_safe, curr_safe);
-            let df_market = analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name)?;
+            let df_market =
+                match analysis::parse_coingecko_market_chart(&cg_json_str, &price_col_name) {
+                    Ok(df) => df,
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to parse market chart for {}-{}: {}. Skipping coin.",
+                            c, curr, e
+                        );
+                        return Ok(None);
+                    }
+                };
             if token.is_cancelled() {
                 return Err(anyhow!("Operation cancelled"));
             }
 
-            let ohlc_val = client.get_coin_ohlc(&c, &curr, &days_str).await?;
+            let ohlc_val = match client.get_coin_ohlc(&c, &curr, &days_str).await {
+                Ok(val) => val,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to fetch OHLC for {}-{}: {}. Skipping coin.",
+                        c, curr, e
+                    );
+                    return Ok(None);
+                }
+            };
             if token.is_cancelled() {
                 return Err(anyhow!("Operation cancelled"));
             }
@@ -312,10 +349,31 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
             }
 
             let ohlc_json_str = serde_json::to_string(&ohlc_val)?;
-            let df_ohlc = analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name)?;
+            let df_ohlc = match analysis::parse_coingecko_ohlc(&ohlc_json_str, &price_col_name) {
+                Ok(df) => df,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to parse OHLC for {}-{}: {}. Skipping coin.",
+                        c, curr, e
+                    );
+                    return Ok(None);
+                }
+            };
 
-            let df = analysis::align_datasets(&df_market, &[df_ohlc], false)?;
-            Ok::<(polars::prelude::DataFrame, String), anyhow::Error>((df, price_col_name))
+            let df = match analysis::align_datasets(&df_market, &[df_ohlc], false) {
+                Ok(df) => df,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to align data for {}-{}: {}. Skipping coin.",
+                        c, curr, e
+                    );
+                    return Ok(None);
+                }
+            };
+            Ok::<Option<(polars::prelude::DataFrame, String)>, anyhow::Error>(Some((
+                df,
+                price_col_name,
+            )))
         });
     }
 
@@ -326,10 +384,13 @@ pub async fn run_pipeline_flow(mut config: PipelineConfig<'_>) -> Result<()> {
         tokio::select! {
             res = join_set.join_next() => {
                 match res {
-                    Some(Ok(Ok((df, col_name)))) => {
+                    Some(Ok(Ok(Some((df, col_name))))) => {
                         pb.set_message(format!("Loaded {} rows for {}", df.height(), &col_name));
                         currency_dfs.push(df);
                         currency_cols.push(col_name);
+                    }
+                    Some(Ok(Ok(None))) => {
+                        // Skipped gracefully due to errors
                     }
                     Some(Ok(Err(e))) => {
                         join_set.shutdown().await;

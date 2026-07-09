@@ -211,3 +211,578 @@ fn test_backtest_with_risk_free_rate() {
     // The Sharpe ratio with 5% risk free rate should be lower than with 0% risk free rate
     assert!(res_rf.strategy_sharpe < res_no_rf.strategy_sharpe);
 }
+
+#[tokio::test]
+async fn test_pipeline_flow_e2e_normal() {
+    use wiremock::MockServer;
+
+    let db_path = "tests/test_normal.db";
+    let output_dir = "tests/out_normal";
+    cleanup_test_files(db_path, output_dir);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    // Setup mocks
+    setup_normal_mocks(&mock_server).await;
+
+    let config = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: true,
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+    };
+
+    let res = cdg::pipeline::run_pipeline_flow(config).await;
+    assert!(res.is_ok(), "Pipeline flow failed: {:?}", res);
+
+    assert_pipeline_outputs_present(output_dir);
+    cleanup_test_files(db_path, output_dir);
+}
+
+#[tokio::test]
+async fn test_pipeline_flow_e2e_coin_404() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let db_path = "tests/test_coin_404.db";
+    let output_dir = "tests/out_coin_404";
+    cleanup_test_files(db_path, output_dir);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    // Setup normal mocks
+    setup_normal_mocks(&mock_server).await;
+
+    // Make invalidcoin return 404
+    Mock::given(method("GET"))
+        .and(path("/coins/invalidcoin/tickers"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    let config = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,invalidcoin",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: true,
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+    };
+
+    let res = cdg::pipeline::run_pipeline_flow(config).await;
+    assert!(res.is_ok(), "Pipeline flow failed with 404 coin: {:?}", res);
+
+    // Verify bitcoin output files exist, but invalidcoin is skipped
+    assert_single_asset_pipeline_outputs_present(output_dir);
+    cleanup_test_files(db_path, output_dir);
+}
+
+#[tokio::test]
+async fn test_pipeline_flow_e2e_missing_tnx() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let db_path = "tests/test_missing_tnx.db";
+    let output_dir = "tests/out_missing_tnx";
+    cleanup_test_files(db_path, output_dir);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    // Ping
+    Mock::given(method("GET"))
+        .and(path("/ping"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"gecko_says": "(V3) To the Moon!"})),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Bitcoin tickers
+    Mock::given(method("GET"))
+        .and(path("/coins/bitcoin/tickers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Bitcoin",
+            "tickers": [{"base": "BTC", "target": "USD", "market": {"name": "Binance", "identifier": "binance"}, "last": 60000.0, "volume": 1000.0, "bid_ask_spread_percentage": 0.05}]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    // Ethereum tickers
+    Mock::given(method("GET"))
+        .and(path("/coins/ethereum/tickers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Ethereum",
+            "tickers": [{"base": "ETH", "target": "USD", "market": {"name": "Binance", "identifier": "binance"}, "last": 3000.0, "volume": 2000.0, "bid_ask_spread_percentage": 0.05}]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    // Bitcoin chart range
+    Mock::given(method("GET"))
+        .and(path("/coins/bitcoin/market_chart/range"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_market_chart_json(60000.0)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Ethereum chart range
+    Mock::given(method("GET"))
+        .and(path("/coins/ethereum/market_chart/range"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_market_chart_json(3000.0)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Bitcoin OHLC
+    Mock::given(method("GET"))
+        .and(path("/coins/bitcoin/ohlc"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_ohlc_json(60000.0)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Ethereum OHLC
+    Mock::given(method("GET"))
+        .and(path("/coins/ethereum/ohlc"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_ohlc_json(3000.0)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Yahoo Tickers, but ^TNX returns 404
+    for ticker in &["^GSPC", "^DJI", "^IXIC", "^HSI", "^BVSP"] {
+        Mock::given(method("GET"))
+            .and(path(&format!("/{}", ticker)))
+            .respond_with(ResponseTemplate::new(200).set_body_json(generate_yahoo_json(ticker)))
+            .mount(&mock_server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/^TNX"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    let config = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: true,
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+    };
+
+    let res = cdg::pipeline::run_pipeline_flow(config).await;
+    assert!(
+        res.is_ok(),
+        "Pipeline flow failed with missing ^TNX: {:?}",
+        res
+    );
+
+    assert_pipeline_outputs_present(output_dir);
+    cleanup_test_files(db_path, output_dir);
+}
+
+#[tokio::test]
+async fn test_pipeline_flow_e2e_cache_hits() {
+    use wiremock::MockServer;
+
+    let db_path = "tests/test_cache_hits.db";
+    let output_dir = "tests/out_cache_hits";
+    cleanup_test_files(db_path, output_dir);
+
+    let mock_server = MockServer::start().await;
+    let mock_url = mock_server.uri();
+
+    // Setup mocks
+    setup_normal_mocks(&mock_server).await;
+
+    let config1 = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: true,
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+    };
+
+    let config2 = cdg::pipeline::PipelineConfig {
+        coin: "bitcoin,ethereum",
+        currency: "usd",
+        days: 30,
+        prep_ml: true,
+        light: false,
+        drop_weekends: false,
+        db_path,
+        output_dir,
+        output_prefix: "test_run",
+        raw_format: "json",
+        seed: Some(1337),
+        cache_ttl: 300,
+        concurrency: Some(3),
+        annualization_factor: None,
+        backtest: true,
+        strategy: "rsi",
+        fee: 0.001,
+        slippage: 0.0005,
+        rebalance_frequency: "daily",
+        coingecko_base_url: Some(&mock_url),
+        yahoo_base_url: Some(&mock_url),
+    };
+
+    // First run
+    let res1 = cdg::pipeline::run_pipeline_flow(config1).await;
+    assert!(res1.is_ok(), "First pipeline flow failed: {:?}", res1);
+
+    // Verify cache has records populated
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path))
+        .await
+        .unwrap();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM api_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(count.0 > 0, "Cache should be populated after the first run");
+
+    // Clear recorded requests on mock server to count only second run requests
+    let reqs_first = mock_server
+        .received_requests()
+        .await
+        .expect("No requests found")
+        .len();
+    assert!(reqs_first > 0);
+
+    // Run second time (should hit cache)
+    let res2 = cdg::pipeline::run_pipeline_flow(config2).await;
+    assert!(res2.is_ok(), "Second pipeline flow failed: {:?}", res2);
+
+    let reqs_total = mock_server
+        .received_requests()
+        .await
+        .expect("No requests found")
+        .len();
+    assert_eq!(
+        reqs_total, reqs_first,
+        "Second run should make zero new HTTP requests due to caching"
+    );
+
+    cleanup_test_files(db_path, output_dir);
+}
+
+fn cleanup_test_files(db_path: &str, output_dir: &str) {
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_dir_all(output_dir);
+}
+
+fn generate_coingecko_market_chart_json(base_price: f64) -> serde_json::Value {
+    let now = chrono::Utc::now().timestamp();
+    let start_ts = now - 50 * 86400;
+    let mut prices = Vec::new();
+    let mut total_volumes = Vec::new();
+    for i in 0..=50 {
+        let ts_ms = (start_ts + i * 86400) * 1000;
+        let price = base_price + i as f64 * (base_price * 0.001);
+        let vol = 1000000.0 + i as f64 * 1000.0;
+        prices.push((ts_ms, price));
+        total_volumes.push((ts_ms, vol));
+    }
+    serde_json::json!({
+        "prices": prices,
+        "total_volumes": total_volumes
+    })
+}
+
+fn generate_coingecko_ohlc_json(base_price: f64) -> serde_json::Value {
+    let now = chrono::Utc::now().timestamp();
+    let start_ts = now - 50 * 86400;
+    let mut data = Vec::new();
+    for i in 0..=50 {
+        let ts_ms = (start_ts + i * 86400) * 1000;
+        let price = base_price + i as f64 * (base_price * 0.001);
+        data.push(vec![
+            ts_ms as f64,
+            price - (base_price * 0.001),
+            price + (base_price * 0.002),
+            price - (base_price * 0.002),
+            price,
+        ]);
+    }
+    serde_json::json!(data)
+}
+
+fn generate_yahoo_json(ticker: &str) -> serde_json::Value {
+    let now = chrono::Utc::now().timestamp();
+    let start_ts = now - 50 * 86400;
+    let mut timestamp = Vec::new();
+    let mut close = Vec::new();
+    for i in 0..=50 {
+        let ts = start_ts + i * 86400;
+        let price = if ticker == "^TNX" {
+            4.0
+        } else {
+            5000.0 + i as f64 * 10.0
+        };
+        timestamp.push(ts);
+        close.push(Some(price));
+    }
+    serde_json::json!({
+        "chart": {
+            "result": [
+                {
+                    "timestamp": timestamp,
+                    "indicators": {
+                        "quote": [
+                            {
+                                "close": close
+                            }
+                        ],
+                        "adjclose": [
+                            {
+                                "adjclose": close
+                            }
+                        ]
+                    }
+                }
+            ],
+            "error": null
+        }
+    })
+}
+
+async fn setup_normal_mocks(server: &wiremock::MockServer) {
+    use wiremock::matchers::{method, path};
+    use wiremock::Mock;
+    use wiremock::ResponseTemplate;
+
+    // Ping
+    Mock::given(method("GET"))
+        .and(path("/ping"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"gecko_says": "(V3) To the Moon!"})),
+        )
+        .mount(server)
+        .await;
+
+    // Bitcoin tickers
+    Mock::given(method("GET"))
+        .and(path("/coins/bitcoin/tickers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Bitcoin",
+            "tickers": [{"base": "BTC", "target": "USD", "market": {"name": "Binance", "identifier": "binance"}, "last": 60000.0, "volume": 1000.0, "bid_ask_spread_percentage": 0.05}]
+        })))
+        .mount(server)
+        .await;
+
+    // Ethereum tickers
+    Mock::given(method("GET"))
+        .and(path("/coins/ethereum/tickers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Ethereum",
+            "tickers": [{"base": "ETH", "target": "USD", "market": {"name": "Binance", "identifier": "binance"}, "last": 3000.0, "volume": 2000.0, "bid_ask_spread_percentage": 0.05}]
+        })))
+        .mount(server)
+        .await;
+
+    // Bitcoin chart range
+    Mock::given(method("GET"))
+        .and(path("/coins/bitcoin/market_chart/range"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_market_chart_json(60000.0)),
+        )
+        .mount(server)
+        .await;
+
+    // Ethereum chart range
+    Mock::given(method("GET"))
+        .and(path("/coins/ethereum/market_chart/range"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_market_chart_json(3000.0)),
+        )
+        .mount(server)
+        .await;
+
+    // Bitcoin OHLC
+    Mock::given(method("GET"))
+        .and(path("/coins/bitcoin/ohlc"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_ohlc_json(60000.0)),
+        )
+        .mount(server)
+        .await;
+
+    // Ethereum OHLC
+    Mock::given(method("GET"))
+        .and(path("/coins/ethereum/ohlc"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(generate_coingecko_ohlc_json(3000.0)),
+        )
+        .mount(server)
+        .await;
+
+    // Yahoo Tickers
+    for ticker in &["^GSPC", "^DJI", "^IXIC", "^HSI", "^BVSP", "^TNX"] {
+        Mock::given(method("GET"))
+            .and(path(&format!("/{}", ticker)))
+            .respond_with(ResponseTemplate::new(200).set_body_json(generate_yahoo_json(ticker)))
+            .mount(server)
+            .await;
+    }
+}
+
+fn assert_pipeline_outputs_present(output_dir: &str) {
+    let mut run_dir_found = false;
+    let paths = std::fs::read_dir(output_dir).expect("Failed to read output_dir");
+    for entry in paths {
+        let entry = entry.expect("Invalid entry");
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name.starts_with("run_") {
+                run_dir_found = true;
+
+                let data_csv = path.join("data.csv");
+                let data_parquet = path.join("data.parquet");
+                let portfolio_weights = path.join("portfolio_weights.csv");
+
+                assert!(data_csv.exists(), "data.csv should exist in run directory");
+                assert!(
+                    data_parquet.exists(),
+                    "data.parquet should exist in run directory"
+                );
+                assert!(
+                    portfolio_weights.exists(),
+                    "portfolio_weights.csv should exist in run directory"
+                );
+
+                let mut png_found = false;
+                let sub_paths = std::fs::read_dir(&path).expect("Failed to read run_dir");
+                for sub_entry in sub_paths {
+                    let sub_entry = sub_entry.expect("Invalid sub-entry");
+                    let sub_path = sub_entry.path();
+                    if sub_path.is_file() {
+                        if let Some(ext) = sub_path.extension() {
+                            if ext == "png" {
+                                png_found = true;
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    png_found,
+                    "At least one PNG file should exist in run directory"
+                );
+            }
+        }
+    }
+    assert!(
+        run_dir_found,
+        "Run directory starting with run_ should be created"
+    );
+}
+
+fn assert_single_asset_pipeline_outputs_present(output_dir: &str) {
+    let mut run_dir_found = false;
+    let paths = std::fs::read_dir(output_dir).expect("Failed to read output_dir");
+    for entry in paths {
+        let entry = entry.expect("Invalid entry");
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name.starts_with("run_") {
+                run_dir_found = true;
+
+                let data_csv = path.join("data.csv");
+                let data_parquet = path.join("data.parquet");
+
+                assert!(data_csv.exists(), "data.csv should exist in run directory");
+                assert!(
+                    data_parquet.exists(),
+                    "data.parquet should exist in run directory"
+                );
+
+                let portfolio_weights = path.join("portfolio_weights.csv");
+                assert!(
+                    !portfolio_weights.exists(),
+                    "portfolio_weights.csv should not exist for single asset run"
+                );
+            }
+        }
+    }
+    assert!(
+        run_dir_found,
+        "Run directory starting with run_ should be created"
+    );
+}
