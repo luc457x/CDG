@@ -2,12 +2,29 @@
 
 ## Status
 
-- State: All P1 alpha gaps closed (G1–G6, G12); P2/P3 gaps backlogged; 113 tests green.
-- Last: Session 49 — implemented P1 post-review gaps + backlogged untracked P2/P3 items.
+- State: Alpha audit complete; 5 P0 blockers + 5 P1 issues identified; NOT alpha-ready.
+- Last: Session 50 — alpha readiness audit + final review document.
 
 ## Log
 
 Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
+
+### Session 50: Alpha Readiness Audit & Final Review
+
+- Date: 2026-07-10
+- Agent: Antigravity
+- Goal: Determine if codebase is good enough for alpha release; produce final review document for tech lead.
+- Constraints: Must be reliable/secure (money decisions), 100% headless-compatible, 100% GCP/Vertex compatible.
+- Done:
+  - Built and tested: `cargo build` clean, `cargo test` 113 pass / 0 fail across 5 suites.
+  - Verified zero `unsafe` in `src/` (only in `target/` libsqlite3-sys bindgen).
+  - Corrected earlier unverified claims: `.env` is gitignored and absent, no `Dockerfile` exists, `cargo audit` not installed.
+  - Produced final review document at `.agents/plans/alpha-final/review.md` with 5 P0 blockers and 5 P1 issues.
+- Blocked: None — review complete.
+- Risk: None — audit only, no code changes.
+- Artifact: `.agents/plans/alpha-final/review.md`.
+- Verification: `cargo test` — 113 pass, 0 failures.
+- Pending: P0 fixes (NaN treasury metrics, CI/CD, TLS, headless guard, SQLite abstraction) must be resolved before alpha tag.
 
 ### Session 49: Implement P1 Gaps from Post-Review
 
@@ -43,22 +60,3 @@ Old sessions: [PROGRESS_ARCHIVE.md](./PROGRESS_ARCHIVE.md).
 - Artifact: `AGENTS.md`, `.agents/rules/structure.md`, `.agents/docs/ADRs/001-gcp-compatibility.md`, `.agents/docs/ADRs/002-native-polars-indicators.md`.
 - Verification: `git show` index blobs vs new files — ADR content identical (CRLF/LF only); `git status` clean post-commit.
 - Pending: None.
-
-### Session 47: Refactor ADR & Spec Rules into Skills
-
-- Date: 2026-07-09
-- Agent: Antigravity
-- Goal: Move ADR decision-gate/template and SPEC.md alignment rules into dedicated skills as single source of truth.
-- Constraints: None.
-- Done:
-  - Created `.agents/skills/adr/SKILL.md` — embedded ADR template + decision-gate (hard-to-reverse, surprising, real trade-off); canonical source for when to write ADR in `.agents/docs/ADRs/`.
-  - Deleted `.agents/docs/ADRs/000_TEMPLATE.md` — template content moved into `adr` skill.
-  - Updated `.agents/skills/grill-me/SKILL.md` — replaced duplicated ADR gate (old lines 54-62) with pointer to `adr` skill; removed drift risk.
-  - Created `.agents/skills/spec-align/SKILL.md` — planning/SDD gate: aligned tasks → implement via `stdd`; unaligned → `spec-triage` (backlog/spec). References existing `spec-triage`, no routing logic duplicated.
-- Blocked: None.
-- Risk: None — skill/docs only; `spec-triage` remains routing source of truth.
-- Artifact: `.agents/skills/adr/SKILL.md`, `.agents/skills/spec-align/SKILL.md`, `.agents/skills/grill-me/SKILL.md`.
-- Verification: `python .agents/skills/audit-skills/scripts/audit_skills.py --skill adr` and `--skill spec-align` — both pass clean (0 structural issues, 0 broken links).
-- Pending: None.
-
-
