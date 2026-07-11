@@ -20,9 +20,15 @@ jobs:
     # fontconfig is a native C lib required at build time by plotters via yeslogic-fontconfig-sys
     - name: Install system dependencies
       run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+    - name: Install Clippy
+      run: rustup component add clippy
       
     - name: Build
       run: cargo build --verbose
+
+    - name: Run Clippy
+      run: cargo clippy --all-targets -- -D warnings
       
     - name: Run tests
       run: cargo test --verbose
