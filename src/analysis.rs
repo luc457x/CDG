@@ -24,11 +24,7 @@ pub fn parse_coingecko_market_chart(json_str: &str, price_col_name: &str) -> Res
         dates.push(datetime.format("%Y-%m-%d").to_string());
         values.push(*val);
 
-        let vol = if i < total_volumes.len() {
-            total_volumes[i].1
-        } else {
-            0.0
-        };
+        let vol = total_volumes.get(i).map(|(_, v)| *v).unwrap_or(0.0);
         volumes.push(vol);
     }
 
@@ -38,12 +34,12 @@ pub fn parse_coingecko_market_chart(json_str: &str, price_col_name: &str) -> Res
         Series::new(&format!("{}_volume", price_col_name), volumes),
     ])?;
 
-    // Group by date and take mean to aggregate to daily
+    // Group by date and aggregate: price -> last close of the day, volume -> mean
     let df = df
         .lazy()
         .group_by([col("date")])
         .agg([
-            col(price_col_name).mean(),
+            col(price_col_name).last(),
             col(&format!("{}_volume", price_col_name)).mean(),
         ])
         .sort("date", SortOptions::default())
@@ -72,6 +68,8 @@ pub fn parse_coingecko_ohlc(json_str: &str, prefix: &str) -> Result<DataFrame> {
             highs.push(item[2]);
             lows.push(item[3]);
             closes.push(item[4]);
+        } else {
+            eprintln!("Warning: Skipped malformed OHLC row: {:?}", item);
         }
     }
 
@@ -83,15 +81,15 @@ pub fn parse_coingecko_ohlc(json_str: &str, prefix: &str) -> Result<DataFrame> {
         Series::new(&format!("{}_close", prefix), closes),
     ])?;
 
-    // Group by date and aggregate: open -> mean, high -> max, low -> min, close -> mean
+    // Group by date and aggregate: open -> first, high -> max, low -> min, close -> last
     let df = df
         .lazy()
         .group_by([col("date")])
         .agg([
-            col(&format!("{}_open", prefix)).mean(),
+            col(&format!("{}_open", prefix)).first(),
             col(&format!("{}_high", prefix)).max(),
             col(&format!("{}_low", prefix)).min(),
-            col(&format!("{}_close", prefix)).mean(),
+            col(&format!("{}_close", prefix)).last(),
         ])
         .sort("date", SortOptions::default())
         .collect()?;
@@ -275,10 +273,8 @@ pub fn parse_yahoo_json(json_str: &str, ticker: &str) -> Result<DataFrame> {
             .and_then(|v| v.get(i).copied().flatten())
             .or_else(|| close_values.and_then(|v| v.get(i).copied().flatten()));
 
-        if let Some(price) = price_opt {
-            dates.push(date_str);
-            prices.push(price);
-        }
+        dates.push(date_str);
+        prices.push(price_opt);
     }
 
     let df = DataFrame::new(vec![
@@ -316,10 +312,13 @@ pub fn align_datasets(
 
     for name in &column_names {
         if name != "date" {
-            let filled = df
-                .column(name)?
-                .fill_null(FillNullStrategy::Forward(None))?
-                .fill_null(FillNullStrategy::Backward(None))?;
+            let filled = if name.ends_with("_volume") {
+                df.column(name)?.fill_null(FillNullStrategy::Zero)?
+            } else {
+                df.column(name)?
+                    .fill_null(FillNullStrategy::Forward(None))?
+                    .fill_null(FillNullStrategy::Backward(None))?
+            };
             df.replace(name, filled)?;
         }
     }
@@ -382,19 +381,29 @@ fn calculate_rsi(prices: &[f64], period: usize) -> Vec<Option<f64>> {
     }
     let mut gains = 0.0;
     let mut losses = 0.0;
+    let mut has_nan = false;
     for i in 1..=period {
         let diff = prices[i] - prices[i - 1];
+        if diff.is_nan() {
+            has_nan = true;
+        }
         if diff > 0.0 {
             gains += diff;
-        } else {
+        } else if diff < 0.0 {
             losses -= diff;
         }
     }
     let mut avg_gain = gains / period as f64;
     let mut avg_loss = losses / period as f64;
 
-    if avg_loss == 0.0 {
-        rsi[period] = Some(100.0);
+    if has_nan {
+        rsi[period] = Some(f64::NAN);
+    } else if avg_loss == 0.0 {
+        if avg_gain == 0.0 {
+            rsi[period] = Some(50.0);
+        } else {
+            rsi[period] = Some(100.0);
+        }
     } else {
         let rs = avg_gain / avg_loss;
         rsi[period] = Some(100.0 - (100.0 / (1.0 + rs)));
@@ -402,6 +411,12 @@ fn calculate_rsi(prices: &[f64], period: usize) -> Vec<Option<f64>> {
 
     for i in (period + 1)..prices.len() {
         let diff = prices[i] - prices[i - 1];
+        if diff.is_nan() || avg_gain.is_nan() || avg_loss.is_nan() {
+            avg_gain = f64::NAN;
+            avg_loss = f64::NAN;
+            rsi[i] = Some(f64::NAN);
+            continue;
+        }
         let gain = if diff > 0.0 { diff } else { 0.0 };
         let loss = if diff < 0.0 { -diff } else { 0.0 };
 
@@ -409,7 +424,11 @@ fn calculate_rsi(prices: &[f64], period: usize) -> Vec<Option<f64>> {
         avg_loss = (avg_loss * (period - 1) as f64 + loss) / period as f64;
 
         if avg_loss == 0.0 {
-            rsi[i] = Some(100.0);
+            if avg_gain == 0.0 {
+                rsi[i] = Some(50.0);
+            } else {
+                rsi[i] = Some(100.0);
+            }
         } else {
             let rs = avg_gain / avg_loss;
             rsi[i] = Some(100.0 - (100.0 / (1.0 + rs)));
@@ -426,22 +445,35 @@ fn calculate_macd(prices: &[f64]) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Op
     let mut macd_line = vec![None; prices.len()];
     for i in 0..prices.len() {
         if let (Some(e12), Some(e26)) = (ema12[i], ema26[i]) {
-            macd_line[i] = Some(e12 - e26);
+            if e12.is_nan() || e26.is_nan() {
+                macd_line[i] = Some(f64::NAN);
+            } else {
+                macd_line[i] = Some(e12 - e26);
+            }
         }
     }
 
     let mut signal_line = vec![None; prices.len()];
     let first_valid_macd = macd_line.iter().position(|x| x.is_some());
     if let Some(start_idx) = first_valid_macd {
-        let macd_slice: Vec<f64> = macd_line[start_idx..].iter().map(|x| x.unwrap()).collect();
+        let macd_slice: Vec<f64> = macd_line[start_idx..]
+            .iter()
+            .map(|x| x.unwrap_or(f64::NAN))
+            .collect();
         let signal_slice = calculate_ema(&macd_slice, 9);
-        signal_line[start_idx..start_idx + signal_slice.len()].clone_from_slice(&signal_slice);
+        for j in 0..signal_slice.len() {
+            signal_line[start_idx + j] = signal_slice[j];
+        }
     }
 
     let mut histogram = vec![None; prices.len()];
     for i in 0..prices.len() {
         if let (Some(m), Some(s)) = (macd_line[i], signal_line[i]) {
-            histogram[i] = Some(m - s);
+            if m.is_nan() || s.is_nan() {
+                histogram[i] = Some(f64::NAN);
+            } else {
+                histogram[i] = Some(m - s);
+            }
         }
     }
 
@@ -460,46 +492,109 @@ fn calculate_bollinger_bands(
 
     for i in (period - 1)..prices.len() {
         if let Some(mean) = sma[i] {
-            let variance: f64 = prices[(i + 1 - period)..=i]
-                .iter()
-                .map(|p| {
-                    let diff = p - mean;
-                    diff * diff
-                })
-                .sum::<f64>()
-                / period as f64;
-            let std_dev = variance.sqrt();
-            upper[i] = Some(mean + k * std_dev);
-            lower[i] = Some(mean - k * std_dev);
+            if mean.is_nan() {
+                upper[i] = Some(f64::NAN);
+                lower[i] = Some(f64::NAN);
+                continue;
+            }
+            let mut has_nan = false;
+            let mut sum_diff_sq = 0.0;
+            for p in &prices[(i + 1 - period)..=i] {
+                if p.is_nan() {
+                    has_nan = true;
+                }
+                let diff = p - mean;
+                sum_diff_sq += diff * diff;
+            }
+            if has_nan {
+                upper[i] = Some(f64::NAN);
+                lower[i] = Some(f64::NAN);
+            } else {
+                let variance = sum_diff_sq / period as f64;
+                let std_dev = variance.sqrt();
+                upper[i] = Some(mean + k * std_dev);
+                lower[i] = Some(mean - k * std_dev);
+            }
         }
     }
     (sma, upper, lower)
 }
 
-fn calculate_atr(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
+fn calculate_atr(
+    high: &[Option<f64>],
+    low: &[Option<f64>],
+    close: &[f64],
+    period: usize,
+) -> Vec<Option<f64>> {
     let n = close.len();
     let mut atr = vec![None; n];
     if n < period {
         return atr;
     }
 
-    let mut tr = vec![0.0; n];
-    tr[0] = high[0] - low[0];
+    let mut tr = vec![None; n];
+    if let (Some(h), Some(l)) = (high[0], low[0]) {
+        if h.is_nan() || l.is_nan() {
+            tr[0] = Some(f64::NAN);
+        } else {
+            tr[0] = Some(h - l);
+        }
+    }
     for i in 1..n {
-        let h_l = high[i] - low[i];
-        let h_pc = (high[i] - close[i - 1]).abs();
-        let l_pc = (low[i] - close[i - 1]).abs();
-        tr[i] = h_l.max(h_pc).max(l_pc);
+        if let (Some(h), Some(l)) = (high[i], low[i]) {
+            let prev_c = close[i - 1];
+            if h.is_nan() || l.is_nan() || prev_c.is_nan() {
+                tr[i] = Some(f64::NAN);
+            } else {
+                let h_l = h - l;
+                let h_pc = (h - prev_c).abs();
+                let l_pc = (l - prev_c).abs();
+                tr[i] = Some(h_l.max(h_pc).max(l_pc));
+            }
+        }
     }
 
     // First ATR is the SMA of TR over the first period
-    let sum_tr: f64 = tr[0..period].iter().sum();
-    let mut current_atr = sum_tr / period as f64;
-    atr[period - 1] = Some(current_atr);
+    let mut sum_tr = 0.0;
+    let mut has_none = false;
+    let mut has_nan = false;
+    for j in 0..period {
+        if let Some(val) = tr[j] {
+            if val.is_nan() {
+                has_nan = true;
+            }
+            sum_tr += val;
+        } else {
+            has_none = true;
+            break;
+        }
+    }
+
+    let mut current_atr = if has_none {
+        None
+    } else if has_nan {
+        let val = f64::NAN;
+        atr[period - 1] = Some(val);
+        Some(val)
+    } else {
+        let val = sum_tr / period as f64;
+        atr[period - 1] = Some(val);
+        Some(val)
+    };
 
     for i in period..n {
-        current_atr = (current_atr * (period - 1) as f64 + tr[i]) / period as f64;
-        atr[i] = Some(current_atr);
+        if let (Some(prev_atr), Some(tr_val)) = (current_atr, tr[i]) {
+            let val = if prev_atr.is_nan() || tr_val.is_nan() {
+                f64::NAN
+            } else {
+                (prev_atr * (period - 1) as f64 + tr_val) / period as f64
+            };
+            atr[i] = Some(val);
+            current_atr = Some(val);
+        } else {
+            atr[i] = None;
+            current_atr = None;
+        }
     }
 
     atr
@@ -507,8 +602,8 @@ fn calculate_atr(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec
 
 #[allow(clippy::needless_range_loop)]
 fn calculate_stochastic(
-    high: &[f64],
-    low: &[f64],
+    high: &[Option<f64>],
+    low: &[Option<f64>],
     close: &[f64],
     period: usize,
 ) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
@@ -521,21 +616,38 @@ fn calculate_stochastic(
 
     for i in (period - 1)..n {
         let start = i + 1 - period;
-        let mut highest_high = high[start];
-        let mut lowest_low = low[start];
+        let mut highest_high = None;
+        let mut lowest_low = None;
+        let mut has_none = false;
+        let mut has_nan = false;
+
         for j in start..=i {
-            if high[j] > highest_high {
-                highest_high = high[j];
-            }
-            if low[j] < lowest_low {
-                lowest_low = low[j];
+            match (high[j], low[j]) {
+                (Some(h), Some(l)) => {
+                    if h.is_nan() || l.is_nan() {
+                        has_nan = true;
+                    }
+                    highest_high = Some(highest_high.map_or(h, |v: f64| v.max(h)));
+                    lowest_low = Some(lowest_low.map_or(l, |v: f64| v.min(l)));
+                }
+                _ => {
+                    has_none = true;
+                    break;
+                }
             }
         }
-        let denominator = highest_high - lowest_low;
-        if denominator != 0.0 {
-            percent_k[i] = Some((close[i] - lowest_low) / denominator * 100.0);
-        } else {
-            percent_k[i] = Some(100.0);
+
+        if has_none {
+            percent_k[i] = None;
+        } else if has_nan || close[i].is_nan() {
+            percent_k[i] = Some(f64::NAN);
+        } else if let (Some(hh), Some(ll)) = (highest_high, lowest_low) {
+            let denominator = hh - ll;
+            if denominator != 0.0 {
+                percent_k[i] = Some((close[i] - ll) / denominator * 100.0);
+            } else {
+                percent_k[i] = Some(100.0);
+            }
         }
     }
 
@@ -543,14 +655,22 @@ fn calculate_stochastic(
     for i in (period - 1 + 2)..n {
         let mut sum = 0.0;
         let mut count = 0;
+        let mut has_nan = false;
         for j in (i - 2)..=i {
             if let Some(k_val) = percent_k[j] {
+                if k_val.is_nan() {
+                    has_nan = true;
+                }
                 sum += k_val;
                 count += 1;
             }
         }
-        if count == 3 {
+        if has_nan {
+            percent_d[i] = Some(f64::NAN);
+        } else if count == 3 {
             percent_d[i] = Some(sum / 3.0);
+        } else {
+            percent_d[i] = None;
         }
     }
 
@@ -558,75 +678,180 @@ fn calculate_stochastic(
 }
 
 #[allow(clippy::needless_range_loop)]
-fn calculate_adx(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
+fn calculate_adx(
+    high: &[Option<f64>],
+    low: &[Option<f64>],
+    close: &[f64],
+    period: usize,
+) -> Vec<Option<f64>> {
     let n = close.len();
     let mut adx = vec![None; n];
     if n < 2 * period {
         return adx;
     }
 
-    let mut tr = vec![0.0; n];
-    let mut dm_plus = vec![0.0; n];
-    let mut dm_minus = vec![0.0; n];
+    let mut tr = vec![None; n];
+    let mut dm_plus = vec![None; n];
+    let mut dm_minus = vec![None; n];
 
-    tr[0] = high[0] - low[0];
-    for i in 1..n {
-        let h_l = high[i] - low[i];
-        let h_pc = (high[i] - close[i - 1]).abs();
-        let l_pc = (low[i] - close[i - 1]).abs();
-        tr[i] = h_l.max(h_pc).max(l_pc);
-
-        let up_move = high[i] - high[i - 1];
-        let down_move = low[i - 1] - low[i];
-
-        if up_move > down_move && up_move > 0.0 {
-            dm_plus[i] = up_move;
+    if let (Some(h0), Some(l0)) = (high[0], low[0]) {
+        if h0.is_nan() || l0.is_nan() {
+            tr[0] = Some(f64::NAN);
+            dm_plus[0] = Some(f64::NAN);
+            dm_minus[0] = Some(f64::NAN);
         } else {
-            dm_plus[i] = 0.0;
-        }
-
-        if down_move > up_move && down_move > 0.0 {
-            dm_minus[i] = down_move;
-        } else {
-            dm_minus[i] = 0.0;
+            tr[0] = Some(h0 - l0);
+            dm_plus[0] = Some(0.0);
+            dm_minus[0] = Some(0.0);
         }
     }
 
-    let mut smoothed_tr = vec![0.0; n];
-    let mut smoothed_dm_plus = vec![0.0; n];
-    let mut smoothed_dm_minus = vec![0.0; n];
+    for i in 1..n {
+        match (high[i], low[i], high[i - 1], low[i - 1]) {
+            (Some(hi), Some(li), Some(hi_prev), Some(li_prev)) => {
+                let prev_c = close[i - 1];
+                if hi.is_nan()
+                    || li.is_nan()
+                    || hi_prev.is_nan()
+                    || li_prev.is_nan()
+                    || prev_c.is_nan()
+                {
+                    tr[i] = Some(f64::NAN);
+                    dm_plus[i] = Some(f64::NAN);
+                    dm_minus[i] = Some(f64::NAN);
+                } else {
+                    let h_l = hi - li;
+                    let h_pc = (hi - prev_c).abs();
+                    let l_pc = (li - prev_c).abs();
+                    tr[i] = Some(h_l.max(h_pc).max(l_pc));
 
-    let sum_tr: f64 = tr[0..period].iter().sum();
-    let sum_dm_plus: f64 = dm_plus[0..period].iter().sum();
-    let sum_dm_minus: f64 = dm_minus[0..period].iter().sum();
+                    let up_move = hi - hi_prev;
+                    let down_move = li_prev - li;
 
-    smoothed_tr[period - 1] = sum_tr;
-    smoothed_dm_plus[period - 1] = sum_dm_plus;
-    smoothed_dm_minus[period - 1] = sum_dm_minus;
+                    if up_move > down_move && up_move > 0.0 {
+                        dm_plus[i] = Some(up_move);
+                    } else {
+                        dm_plus[i] = Some(0.0);
+                    }
+
+                    if down_move > up_move && down_move > 0.0 {
+                        dm_minus[i] = Some(down_move);
+                    } else {
+                        dm_minus[i] = Some(0.0);
+                    }
+                }
+            }
+            _ => {
+                tr[i] = None;
+                dm_plus[i] = None;
+                dm_minus[i] = None;
+            }
+        }
+    }
+
+    let mut smoothed_tr = vec![None; n];
+    let mut smoothed_dm_plus = vec![None; n];
+    let mut smoothed_dm_minus = vec![None; n];
+
+    let mut sum_tr = 0.0;
+    let mut sum_dm_plus = 0.0;
+    let mut sum_dm_minus = 0.0;
+    let mut initial_has_none = false;
+    let mut initial_has_nan = false;
+
+    for j in 0..period {
+        match (tr[j], dm_plus[j], dm_minus[j]) {
+            (Some(t_val), Some(dp_val), Some(dm_val)) => {
+                if t_val.is_nan() || dp_val.is_nan() || dm_val.is_nan() {
+                    initial_has_nan = true;
+                }
+                sum_tr += t_val;
+                sum_dm_plus += dp_val;
+                sum_dm_minus += dm_val;
+            }
+            _ => {
+                initial_has_none = true;
+                break;
+            }
+        }
+    }
+
+    if initial_has_none {
+        // Leave as None
+    } else if initial_has_nan {
+        smoothed_tr[period - 1] = Some(f64::NAN);
+        smoothed_dm_plus[period - 1] = Some(f64::NAN);
+        smoothed_dm_minus[period - 1] = Some(f64::NAN);
+    } else {
+        smoothed_tr[period - 1] = Some(sum_tr);
+        smoothed_dm_plus[period - 1] = Some(sum_dm_plus);
+        smoothed_dm_minus[period - 1] = Some(sum_dm_minus);
+    }
 
     for i in period..n {
-        smoothed_tr[i] = smoothed_tr[i - 1] - (smoothed_tr[i - 1] / period as f64) + tr[i];
-        smoothed_dm_plus[i] =
-            smoothed_dm_plus[i - 1] - (smoothed_dm_plus[i - 1] / period as f64) + dm_plus[i];
-        smoothed_dm_minus[i] =
-            smoothed_dm_minus[i - 1] - (smoothed_dm_minus[i - 1] / period as f64) + dm_minus[i];
+        match (
+            smoothed_tr[i - 1],
+            smoothed_dm_plus[i - 1],
+            smoothed_dm_minus[i - 1],
+            tr[i],
+            dm_plus[i],
+            dm_minus[i],
+        ) {
+            (
+                Some(str_prev),
+                Some(sdmp_prev),
+                Some(sdmm_prev),
+                Some(tr_curr),
+                Some(dmp_curr),
+                Some(dmm_curr),
+            ) => {
+                if str_prev.is_nan()
+                    || sdmp_prev.is_nan()
+                    || sdmm_prev.is_nan()
+                    || tr_curr.is_nan()
+                    || dmp_curr.is_nan()
+                    || dmm_curr.is_nan()
+                {
+                    smoothed_tr[i] = Some(f64::NAN);
+                    smoothed_dm_plus[i] = Some(f64::NAN);
+                    smoothed_dm_minus[i] = Some(f64::NAN);
+                } else {
+                    smoothed_tr[i] = Some(str_prev - (str_prev / period as f64) + tr_curr);
+                    smoothed_dm_plus[i] = Some(sdmp_prev - (sdmp_prev / period as f64) + dmp_curr);
+                    smoothed_dm_minus[i] = Some(sdmm_prev - (sdmm_prev / period as f64) + dmm_curr);
+                }
+            }
+            _ => {
+                smoothed_tr[i] = None;
+                smoothed_dm_plus[i] = None;
+                smoothed_dm_minus[i] = None;
+            }
+        }
     }
 
     let mut dx = vec![None; n];
     for i in (period - 1)..n {
-        let tr_val = smoothed_tr[i];
-        if tr_val > 0.0 {
-            let di_plus = (smoothed_dm_plus[i] / tr_val) * 100.0;
-            let di_minus = (smoothed_dm_minus[i] / tr_val) * 100.0;
-            let diff = (di_plus - di_minus).abs();
-            let sum = di_plus + di_minus;
-            if sum > 0.0 {
-                dx[i] = Some((diff / sum) * 100.0);
-            } else {
-                dx[i] = Some(0.0);
+        match (smoothed_tr[i], smoothed_dm_plus[i], smoothed_dm_minus[i]) {
+            (Some(tr_val), Some(dmp_val), Some(dmm_val)) => {
+                if tr_val.is_nan() || dmp_val.is_nan() || dmm_val.is_nan() {
+                    dx[i] = Some(f64::NAN);
+                } else if tr_val > 0.0 {
+                    let di_plus = (dmp_val / tr_val) * 100.0;
+                    let di_minus = (dmm_val / tr_val) * 100.0;
+                    let diff = (di_plus - di_minus).abs();
+                    let sum = di_plus + di_minus;
+                    if sum > 0.0 {
+                        dx[i] = Some((diff / sum) * 100.0);
+                    } else {
+                        dx[i] = Some(0.0);
+                    }
+                } else {
+                    dx[i] = Some(0.0);
+                }
             }
-        } else {
-            dx[i] = Some(0.0);
+            _ => {
+                dx[i] = None;
+            }
         }
     }
 
@@ -638,48 +863,108 @@ fn calculate_adx(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec
     }
 
     if dx_valid.len() >= period {
+        let mut is_contiguous = true;
         let mut sum_dx = 0.0;
+        let mut has_nan = false;
         for j in 0..period {
-            sum_dx += dx_valid[j].1;
+            if j > 0 && dx_valid[j].0 != dx_valid[j - 1].0 + 1 {
+                is_contiguous = false;
+            }
+            let val = dx_valid[j].1;
+            if val.is_nan() {
+                has_nan = true;
+            }
+            sum_dx += val;
         }
-        let mut current_adx = sum_dx / period as f64;
+
+        let mut current_adx = if is_contiguous {
+            if has_nan {
+                Some(f64::NAN)
+            } else {
+                Some(sum_dx / period as f64)
+            }
+        } else {
+            None
+        };
+
         let first_adx_idx = dx_valid[period - 1].0;
-        adx[first_adx_idx] = Some(current_adx);
+        adx[first_adx_idx] = current_adx;
 
         for j in period..dx_valid.len() {
             let idx = dx_valid[j].0;
             let val = dx_valid[j].1;
-            current_adx = (current_adx * (period - 1) as f64 + val) / period as f64;
-            adx[idx] = Some(current_adx);
+
+            if dx_valid[j].0 != dx_valid[j - 1].0 + 1 {
+                current_adx = None;
+            }
+
+            if let Some(prev_adx) = current_adx {
+                if prev_adx.is_nan() || val.is_nan() {
+                    current_adx = Some(f64::NAN);
+                } else {
+                    current_adx = Some((prev_adx * (period - 1) as f64 + val) / period as f64);
+                }
+            }
+            adx[idx] = current_adx;
         }
     }
 
     adx
 }
 
-fn calculate_obv(close: &[f64], volume: &[f64]) -> Vec<Option<f64>> {
+fn calculate_obv(close: &[f64], volume: &[Option<f64>]) -> Vec<Option<f64>> {
     let n = close.len();
     let mut obv = vec![None; n];
     if n == 0 {
         return obv;
     }
-    let mut current_obv = volume[0];
-    obv[0] = Some(current_obv);
-    for i in 1..n {
-        if close[i] > close[i - 1] {
-            current_obv += volume[i];
-        } else if close[i] < close[i - 1] {
-            current_obv -= volume[i];
+    let mut current_obv = if let Some(v) = volume[0] {
+        if v.is_nan() || close[0].is_nan() {
+            Some(f64::NAN)
+        } else {
+            Some(v)
         }
-        obv[i] = Some(current_obv);
+    } else {
+        None
+    };
+    obv[0] = current_obv;
+    for i in 1..n {
+        match (current_obv, volume[i]) {
+            (Some(curr), Some(v)) => {
+                if curr.is_nan() || v.is_nan() || close[i].is_nan() || close[i - 1].is_nan() {
+                    current_obv = Some(f64::NAN);
+                } else if close[i] > close[i - 1] {
+                    current_obv = Some(curr + v);
+                } else if close[i] < close[i - 1] {
+                    current_obv = Some(curr - v);
+                } else {
+                    current_obv = Some(curr);
+                }
+            }
+            _ => {
+                current_obv = None;
+            }
+        }
+        obv[i] = current_obv;
     }
     obv
 }
 
-pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Result<DataFrame> {
+pub fn compute_returns_and_indicators(
+    df: &DataFrame,
+    target_column: &str,
+) -> Result<(DataFrame, Vec<String>)> {
+    let mut warnings: Vec<String> = Vec::new();
     let prices_series = df.column(target_column)?;
     let prices_raw: Vec<Option<f64>> = prices_series.f64()?.into_iter().collect();
     let n = prices_raw.len();
+
+    let dates_series = df.column("date")?;
+    let dates_raw: Vec<String> = dates_series
+        .str()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or("unknown-date").to_string())
+        .collect();
 
     // Build index map and filtered price slice, skipping nulls
     let valid_indices: Vec<usize> = prices_raw
@@ -698,8 +983,13 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
     for i in 1..prices.len() {
         let prev = prices[i - 1];
         if prev != 0.0 {
-            smp_returns_filtered[i] = Some(((prices[i] / prev) - 1.0) * 100.0);
-            log_returns_filtered[i] = Some((prices[i] / prev).ln() * 100.0);
+            if prices[i].is_nan() || prev.is_nan() {
+                smp_returns_filtered[i] = Some(f64::NAN);
+                log_returns_filtered[i] = Some(f64::NAN);
+            } else {
+                smp_returns_filtered[i] = Some(((prices[i] / prev) - 1.0) * 100.0);
+                log_returns_filtered[i] = Some((prices[i] / prev).ln() * 100.0);
+            }
         }
     }
 
@@ -719,65 +1009,47 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
         full
     };
 
-    let mut out_df = df.clone();
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_simple_return", target_column),
-            scatter(&smp_returns_filtered),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_log_return", target_column),
-            scatter(&log_returns_filtered),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_sma_20", target_column), scatter(&sma20)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_ema_20", target_column), scatter(&ema20)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_rsi_14", target_column), scatter(&rsi14)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(&format!("{}_macd_line", target_column), scatter(&macd_line)),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_macd_signal", target_column),
-            scatter(&macd_signal),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_macd_histogram", target_column),
-            scatter(&macd_hist),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_bollinger_upper", target_column),
-            scatter(&bb_upper),
-        ),
-    )?;
-    out_df.insert_column(
-        out_df.width(),
-        Series::new(
-            &format!("{}_bollinger_lower", target_column),
-            scatter(&bb_lower),
-        ),
-    )?;
+    let mut new_cols = Vec::new();
+    new_cols.push(Series::new(
+        &format!("{}_simple_return", target_column),
+        scatter(&smp_returns_filtered),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_log_return", target_column),
+        scatter(&log_returns_filtered),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_sma_20", target_column),
+        scatter(&sma20),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_ema_20", target_column),
+        scatter(&ema20),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_rsi_14", target_column),
+        scatter(&rsi14),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_macd_line", target_column),
+        scatter(&macd_line),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_macd_signal", target_column),
+        scatter(&macd_signal),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_macd_histogram", target_column),
+        scatter(&macd_hist),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_bollinger_upper", target_column),
+        scatter(&bb_upper),
+    ));
+    new_cols.push(Series::new(
+        &format!("{}_bollinger_lower", target_column),
+        scatter(&bb_lower),
+    ));
 
     // Advanced technical indicators (ATR, Stochastic, ADX, OBV) if columns exist
     let high_col = format!("{}_high", target_column);
@@ -788,198 +1060,81 @@ pub fn compute_returns_and_indicators(df: &DataFrame, target_column: &str) -> Re
         let highs_raw: Vec<Option<f64>> = df.column(&high_col)?.f64()?.into_iter().collect();
         let lows_raw: Vec<Option<f64>> = df.column(&low_col)?.f64()?.into_iter().collect();
 
-        let highs: Vec<f64> = valid_indices
-            .iter()
-            .map(|&i| highs_raw[i].unwrap_or(0.0))
-            .collect();
-        let lows: Vec<f64> = valid_indices
-            .iter()
-            .map(|&i| lows_raw[i].unwrap_or(0.0))
-            .collect();
+        // Collect warnings for null OHLC values
+        for &i in &valid_indices {
+            if highs_raw[i].is_none() {
+                warnings.push(format!(
+                    "{}: {} high was null — ATR/ADX/Stoch set to None",
+                    target_column, dates_raw[i]
+                ));
+            }
+            if lows_raw[i].is_none() {
+                warnings.push(format!(
+                    "{}: {} low was null — ATR/ADX/Stoch set to None",
+                    target_column, dates_raw[i]
+                ));
+            }
+        }
+
+        let highs: Vec<Option<f64>> = valid_indices.iter().map(|&i| highs_raw[i]).collect();
+        let lows: Vec<Option<f64>> = valid_indices.iter().map(|&i| lows_raw[i]).collect();
 
         let atr = calculate_atr(&highs, &lows, &prices, 14);
         let (stoch_k, stoch_d) = calculate_stochastic(&highs, &lows, &prices, 14);
         let adx = calculate_adx(&highs, &lows, &prices, 14);
 
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_atr_14", target_column), scatter(&atr)),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_stoch_k_14", target_column), scatter(&stoch_k)),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_stoch_d_3", target_column), scatter(&stoch_d)),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_adx_14", target_column), scatter(&adx)),
-        )?;
+        new_cols.push(Series::new(
+            &format!("{}_atr_14", target_column),
+            scatter(&atr),
+        ));
+        new_cols.push(Series::new(
+            &format!("{}_stoch_k_14", target_column),
+            scatter(&stoch_k),
+        ));
+        new_cols.push(Series::new(
+            &format!("{}_stoch_d_3", target_column),
+            scatter(&stoch_d),
+        ));
+        new_cols.push(Series::new(
+            &format!("{}_adx_14", target_column),
+            scatter(&adx),
+        ));
     }
 
     if df.column(&vol_col).is_ok() {
         let vols_raw: Vec<Option<f64>> = df.column(&vol_col)?.f64()?.into_iter().collect();
-        let vols: Vec<f64> = valid_indices
-            .iter()
-            .map(|&i| vols_raw[i].unwrap_or(0.0))
-            .collect();
+
+        for &i in &valid_indices {
+            if vols_raw[i].is_none() {
+                let msg = format!(
+                    "{}: {} volume was null — OBV set to None",
+                    target_column, dates_raw[i]
+                );
+                warnings.push(msg);
+            }
+        }
+
+        let vols: Vec<Option<f64>> = valid_indices.iter().map(|&i| vols_raw[i]).collect();
 
         let obv = calculate_obv(&prices, &vols);
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_obv", target_column), scatter(&obv)),
-        )?;
+        new_cols.push(Series::new(
+            &format!("{}_obv", target_column),
+            scatter(&obv),
+        ));
     }
 
-    Ok(out_df)
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IndicatorResult {
-    pub simple_returns: Vec<f64>,
-    pub log_returns: Vec<f64>,
-    pub ema_12: Vec<f64>,
-    pub ema_26: Vec<f64>,
-    pub macd: Vec<f64>,
-    pub macd_signal: Vec<f64>,
-    pub macd_histogram: Vec<f64>,
-    pub rsi_14: Vec<f64>,
-    pub obv: Vec<f64>,
-}
-
-pub fn compute_indicators_raw(prices: &[f64], volumes: &[f64]) -> IndicatorResult {
-    let n = prices.len();
-    let mut simple_returns = vec![0.0; n];
-    let mut log_returns = vec![0.0; n];
-    let mut ema_12 = vec![0.0; n];
-    let mut ema_26 = vec![0.0; n];
-    let mut macd = vec![0.0; n];
-    let mut macd_signal = vec![0.0; n];
-    let mut macd_histogram = vec![0.0; n];
-    let mut rsi_14 = vec![0.0; n];
-    let mut obv = vec![0.0; n];
-
-    if n == 0 {
-        return IndicatorResult {
-            simple_returns,
-            log_returns,
-            ema_12,
-            ema_26,
-            macd,
-            macd_signal,
-            macd_histogram,
-            rsi_14,
-            obv,
-        };
-    }
-
-    // 1. Returns and OBV
-    obv[0] = volumes[0];
-    for i in 1..n {
-        let prev_p = prices[i - 1];
-        let curr_p = prices[i];
-        if prev_p > 0.0 {
-            simple_returns[i] = (curr_p - prev_p) / prev_p;
-            log_returns[i] = (curr_p / prev_p).ln();
-        }
-        if curr_p > prev_p {
-            obv[i] = obv[i - 1] + volumes[i];
-        } else if curr_p < prev_p {
-            obv[i] = obv[i - 1] - volumes[i];
-        } else {
-            obv[i] = obv[i - 1];
-        }
-    }
-
-    // Helper for EMA calculation
-    let calc_ema = |data: &[f64], period: usize| -> Vec<f64> {
-        let mut ema = vec![0.0; n];
-        if n < period {
-            return ema;
-        }
-        let k = 2.0 / (period as f64 + 1.0);
-        let sum: f64 = data[0..period].iter().sum();
-        ema[period - 1] = sum / (period as f64);
-        for i in period..n {
-            ema[i] = data[i] * k + ema[i - 1] * (1.0 - k);
-        }
-        ema
-    };
-
-    // 2. EMAs
-    ema_12 = calc_ema(prices, 12);
-    ema_26 = calc_ema(prices, 26);
-
-    // 3. MACD
-    for i in 0..n {
-        macd[i] = ema_12[i] - ema_26[i];
-    }
-    macd_signal = calc_ema(&macd, 9);
-    for i in 0..n {
-        macd_histogram[i] = macd[i] - macd_signal[i];
-    }
-
-    // 4. RSI (14)
-    if n >= 14 {
-        let mut gains = vec![0.0; n];
-        let mut losses = vec![0.0; n];
-        for i in 1..n {
-            let diff = prices[i] - prices[i - 1];
-            if diff > 0.0 {
-                gains[i] = diff;
-            } else {
-                losses[i] = -diff;
-            }
-        }
-        let mut avg_gain = vec![0.0; n];
-        let mut avg_loss = vec![0.0; n];
-
-        let mut sum_gain = 0.0;
-        let mut sum_loss = 0.0;
-        for i in 1..=14 {
-            sum_gain += gains[i];
-            sum_loss += losses[i];
-        }
-        avg_gain[14] = sum_gain / 14.0;
-        avg_loss[14] = sum_loss / 14.0;
-
-        for i in 15..n {
-            avg_gain[i] = (avg_gain[i - 1] * 13.0 + gains[i]) / 14.0;
-            avg_loss[i] = (avg_loss[i - 1] * 13.0 + losses[i]) / 14.0;
-        }
-
-        for i in 14..n {
-            if avg_loss[i] == 0.0 {
-                rsi_14[i] = 100.0;
-            } else {
-                let rs = avg_gain[i] / avg_loss[i];
-                rsi_14[i] = 100.0 - (100.0 / (1.0 + rs));
-            }
-        }
-    }
-
-    IndicatorResult {
-        simple_returns,
-        log_returns,
-        ema_12,
-        ema_26,
-        macd,
-        macd_signal,
-        macd_histogram,
-        rsi_14,
-        obv,
-    }
+    let out_df = df.hstack(&new_cols)?;
+    Ok((out_df, warnings))
 }
 
 pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
-    let mut out_df = df.clone();
     let col_names: Vec<String> = df
         .get_column_names()
         .iter()
         .map(|&s| s.to_string())
         .collect();
+
+    let mut new_cols = Vec::new();
 
     for name in col_names {
         if name == "date" {
@@ -990,7 +1145,11 @@ pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
         let values: Vec<Option<f64>> = series.f64()?.into_iter().collect();
 
         // Calculate min, max, mean, std using sample variance (N-1) to match sklearn convention
-        let valid_values: Vec<f64> = values.iter().filter_map(|&v| v).collect();
+        let valid_values: Vec<f64> = values
+            .iter()
+            .filter_map(|&v| v)
+            .filter(|&v| v.is_finite())
+            .collect();
 
         if valid_values.is_empty() {
             continue;
@@ -1016,6 +1175,7 @@ pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
         } else {
             0.0
         };
+        // Constant-variance fallback: std = 1.0 is intentional (avoids division by zero if all values are identical)
         let std = if variance > 0.0 { variance.sqrt() } else { 1.0 };
 
         // MinMax
@@ -1038,16 +1198,11 @@ pub fn prep_ml(df: &DataFrame) -> Result<DataFrame> {
             .map(|&opt| opt.map(|x| (x - mean) / std))
             .collect();
 
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_minmax", name), minmax),
-        )?;
-        out_df.insert_column(
-            out_df.width(),
-            Series::new(&format!("{}_standard", name), standard),
-        )?;
+        new_cols.push(Series::new(&format!("{}_minmax", name), minmax));
+        new_cols.push(Series::new(&format!("{}_standard", name), standard));
     }
 
+    let out_df = df.hstack(&new_cols)?;
     Ok(out_df)
 }
 
@@ -1150,10 +1305,12 @@ mod tests {
     #[test]
     fn test_returns_and_indicators_computation() {
         let mut prices = Vec::new();
-        for i in 0..30 {
+        for i in 0..60 {
             prices.push(100.0 + i as f64);
         }
-        let dates: Vec<String> = (0..30).map(|i| format!("2026-06-{:02}", i + 1)).collect();
+        let dates: Vec<String> = (0..60)
+            .map(|i| format!("2026-{:02}-{:02}", 1 + i / 28, 1 + i % 28))
+            .collect();
 
         let df = DataFrame::new(vec![
             Series::new("date", dates),
@@ -1161,7 +1318,7 @@ mod tests {
         ])
         .unwrap();
 
-        let res = compute_returns_and_indicators(&df, "bitcoin").unwrap();
+        let (res, warnings) = compute_returns_and_indicators(&df, "bitcoin").unwrap();
         assert!(res.column("bitcoin_simple_return").is_ok());
         assert!(res.column("bitcoin_log_return").is_ok());
         assert!(res.column("bitcoin_sma_20").is_ok());
@@ -1169,6 +1326,50 @@ mod tests {
         assert!(res.column("bitcoin_rsi_14").is_ok());
         assert!(res.column("bitcoin_macd_line").is_ok());
         assert!(res.column("bitcoin_bollinger_upper").is_ok());
+
+        // RSI must be in [0, 100] for all non-None values
+        let rsi_col = res.column("bitcoin_rsi_14").unwrap().f64().unwrap();
+        for v in rsi_col.into_iter().flatten() {
+            if v.is_finite() {
+                assert!((0.0..=100.0).contains(&v), "RSI out of bounds: {}", v);
+            }
+        }
+
+        // Bollinger upper > lower for all non-None pairs
+        let upper = res.column("bitcoin_bollinger_upper").unwrap().f64().unwrap();
+        let lower = res.column("bitcoin_bollinger_lower").unwrap().f64().unwrap();
+        for (u, l) in upper.into_iter().zip(lower.into_iter()) {
+            if let (Some(u), Some(l)) = (u, l) {
+                if u.is_finite() && l.is_finite() {
+                    assert!(u >= l, "Bollinger upper ({}) < lower ({})", u, l);
+                }
+            }
+        }
+
+        // MACD histogram = MACD line − signal for all non-None triples
+        let macd_line = res.column("bitcoin_macd_line").unwrap().f64().unwrap();
+        let macd_sig = res.column("bitcoin_macd_signal").unwrap().f64().unwrap();
+        let macd_hist = res.column("bitcoin_macd_histogram").unwrap().f64().unwrap();
+        for ((ml, ms), mh) in macd_line
+            .into_iter()
+            .zip(macd_sig.into_iter())
+            .zip(macd_hist.into_iter())
+        {
+            if let (Some(ml), Some(ms), Some(mh)) = (ml, ms, mh) {
+                if ml.is_finite() && ms.is_finite() && mh.is_finite() {
+                    assert!(
+                        (mh - (ml - ms)).abs() < 1e-9,
+                        "MACD hist ({}) != line ({}) - signal ({})",
+                        mh,
+                        ml,
+                        ms
+                    );
+                }
+            }
+        }
+
+        // No volume → no OBV warnings expected on pure price data
+        assert!(warnings.is_empty());
     }
 
     #[test]
@@ -1313,6 +1514,67 @@ mod tests {
     }
 
     #[test]
+    fn test_macd_golden() {
+        // Constant prices → EMA12==EMA26 → MACD line=0, histogram=0
+        // EMA26 requires 26 bars (index 25+), EMA9 of MACD requires 9 more → signal valid from index 33+
+        let prices = vec![50.0f64; 50];
+        let (macd_line, signal_line, histogram) = calculate_macd(&prices);
+
+        // Verify histogram = line − signal for all Some triples
+        for i in 0..prices.len() {
+            match (macd_line[i], signal_line[i], histogram[i]) {
+                (Some(ml), Some(ms), Some(mh)) => {
+                    assert!(
+                        (mh - (ml - ms)).abs() < 1e-9,
+                        "MACD hist ({}) != line ({}) - signal ({}) at i={}",
+                        mh,
+                        ml,
+                        ms,
+                        i
+                    );
+                }
+                (None, None, None) => {}
+                // signal may be None while line is Some during signal warm-up — that is fine
+                _ => {}
+            }
+        }
+
+        // After full warm-up (EMA26 + EMA9 of MACD = index 33+), all three should be Some(0)
+        for i in 33..prices.len() {
+            let ml = macd_line[i].expect(&format!("macd_line None at i={}", i));
+            let ms = signal_line[i].expect(&format!("signal_line None at i={}", i));
+            let mh = histogram[i].expect(&format!("histogram None at i={}", i));
+            assert!(ml.abs() < 1e-9, "MACD line non-zero for constant prices at i={}: {}", i, ml);
+            assert!((mh - (ml - ms)).abs() < 1e-9, "hist != line-signal at i={}", i);
+        }
+    }
+
+    #[test]
+    fn test_adx_golden() {
+        // Monotonically rising prices → clear uptrend → ADX should become positive
+        // With period=14: dx starts at index 13, first ADX at dx_valid[13].0 = 26
+        let n = 60usize;
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + i as f64).collect();
+        let high: Vec<Option<f64>> = close.iter().map(|&c| Some(c + 1.0)).collect();
+        let low: Vec<Option<f64>> = close.iter().map(|&c| Some(c - 1.0)).collect();
+        let adx = calculate_adx(&high, &low, &close, 14);
+        // First 26 indices (0..=25) should be None
+        for i in 0..26 {
+            assert_eq!(adx[i], None, "expected None at warm-up index {}", i);
+        }
+        // From index 26 onward ADX must be in [0, 100]
+        for i in 26..n {
+            let val = adx[i].expect(&format!("expected Some ADX at i={}", i));
+            assert!(
+                val >= 0.0 && val <= 100.0,
+                "ADX out of [0,100] at i={}: {}",
+                i,
+                val
+            );
+        }
+    }
+
+    #[test]
     fn test_advanced_indicators_computation() {
         let dates: Vec<String> = (0..35).map(|i| format!("2026-06-{:02}", i + 1)).collect();
         let highs: Vec<f64> = (0..35).map(|i| 102.0 + i as f64).collect();
@@ -1329,7 +1591,7 @@ mod tests {
         ])
         .unwrap();
 
-        let res = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+        let (res, _warnings) = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
         assert!(res.column("bitcoin_usd_atr_14").is_ok());
         assert!(res.column("bitcoin_usd_stoch_k_14").is_ok());
         assert!(res.column("bitcoin_usd_stoch_d_3").is_ok());
@@ -1338,21 +1600,543 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_indicators_raw() {
-        let prices = vec![
-            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0,
-            112.0, 113.0, 114.0, 115.0,
-        ];
-        let volumes = vec![100.0; 16];
-        let result = compute_indicators_raw(&prices, &volumes);
-        assert_eq!(result.simple_returns.len(), 16);
-        assert_eq!(result.log_returns.len(), 16);
-        assert_eq!(result.ema_12.len(), 16);
-        assert_eq!(result.ema_26.len(), 16);
-        assert_eq!(result.macd.len(), 16);
-        assert_eq!(result.macd_signal.len(), 16);
-        assert_eq!(result.macd_histogram.len(), 16);
-        assert_eq!(result.rsi_14.len(), 16);
-        assert_eq!(result.obv.len(), 16);
+    fn test_obv_monotonic_flat_price() {
+        let dates: Vec<String> = (0..10).map(|i| format!("2026-06-{:02}", i + 1)).collect();
+        let closes = vec![100.0; 10];
+        let volumes = vec![10.0, 20.0, 15.0, 30.0, 5.0, 40.0, 50.0, 2.0, 8.0, 12.0];
+
+        let df = DataFrame::new(vec![
+            Series::new("date", dates),
+            Series::new("bitcoin_usd", closes),
+            Series::new("bitcoin_usd_volume", volumes),
+        ])
+        .unwrap();
+
+        let (res, _warnings) = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+        let obv = res.column("bitcoin_usd_obv").unwrap().f64().unwrap();
+        for i in 0..obv.len() {
+            assert_eq!(obv.get(i), Some(10.0));
+        }
+    }
+
+    // --- Parser bug fixes unit tests (Phase 01) ---
+
+    #[test]
+    fn test_parse_coingecko_market_chart_prices_greater_than_volumes() {
+        let json_data = r#"{
+            "prices": [
+                [1700000000000, 50000.0],
+                [1700086400000, 51000.0]
+            ],
+            "total_volumes": [
+                [1700000000000, 100.0]
+            ]
+        }"#;
+        // Should not panic, volume for second day should be 0.0
+        let df = parse_coingecko_market_chart(json_data, "bitcoin").unwrap();
+        assert_eq!(df.height(), 2);
+        assert_eq!(
+            df.column("bitcoin_volume").unwrap().f64().unwrap().get(1),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn test_parse_coingecko_market_chart_multi_price_day_last_close() {
+        // Multiple entries on same day (2023-11-14 UT timestamps)
+        let json_data = r#"{
+            "prices": [
+                [1700000000000, 50000.0],
+                [1700001000000, 50500.0],
+                [1700002000000, 51000.0]
+            ],
+            "total_volumes": [
+                [1700000000000, 100.0],
+                [1700001000000, 200.0],
+                [1700002000000, 300.0]
+            ]
+        }"#;
+        let df = parse_coingecko_market_chart(json_data, "bitcoin").unwrap();
+        assert_eq!(df.height(), 1);
+        // Price should be the last close of the day (51000.0)
+        assert_eq!(
+            df.column("bitcoin").unwrap().f64().unwrap().get(0),
+            Some(51000.0)
+        );
+        // Volume should be the mean: (100 + 200 + 300) / 3 = 200.0
+        assert_eq!(
+            df.column("bitcoin_volume").unwrap().f64().unwrap().get(0),
+            Some(200.0)
+        );
+    }
+
+    #[test]
+    fn test_parse_coingecko_ohlc_aggregation_first_last() {
+        let json_data = r#"[
+            [1700000000000, 50000.0, 51000.0, 49000.0, 50500.0],
+            [1700001000000, 50500.0, 52000.0, 48000.0, 51500.0]
+        ]"#;
+        let df = parse_coingecko_ohlc(json_data, "bitcoin").unwrap();
+        assert_eq!(df.height(), 1);
+        // Open should be the first open (50000.0)
+        assert_eq!(
+            df.column("bitcoin_open").unwrap().f64().unwrap().get(0),
+            Some(50000.0)
+        );
+        // High should be the max high (52000.0)
+        assert_eq!(
+            df.column("bitcoin_high").unwrap().f64().unwrap().get(0),
+            Some(52000.0)
+        );
+        // Low should be the min low (48000.0)
+        assert_eq!(
+            df.column("bitcoin_low").unwrap().f64().unwrap().get(0),
+            Some(48000.0)
+        );
+        // Close should be the last close (51500.0)
+        assert_eq!(
+            df.column("bitcoin_close").unwrap().f64().unwrap().get(0),
+            Some(51500.0)
+        );
+    }
+
+    #[test]
+    fn test_parse_coingecko_ohlc_malformed_row() {
+        let json_data = r#"[
+            [1700000000000, 50000.0, 51000.0, 49000.0, 50500.0],
+            [1700001000000],
+            [1700002000000, 50500.0, 52000.0, 48000.0, 51500.0]
+        ]"#;
+        let df = parse_coingecko_ohlc(json_data, "bitcoin").unwrap();
+        assert_eq!(df.height(), 1); // Grouped to 1 day
+    }
+
+    #[test]
+    fn test_parse_yahoo_json_null_continuity() {
+        let json_data = r#"{
+            "chart": {
+                "result": [
+                    {
+                        "timestamp": [1700000000, 1700086400, 1700172800],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "close": [151.0, null, 153.0]
+                                }
+                            ],
+                            "adjclose": [
+                                {
+                                    "adjclose": [151.0, null, 153.0]
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "error": null
+            }
+        }"#;
+        let df = parse_yahoo_json(json_data, "^GSPC").unwrap();
+        assert_eq!(df.height(), 3);
+        assert_eq!(
+            df.column("^GSPC").unwrap().f64().unwrap().get(0),
+            Some(151.0)
+        );
+        assert_eq!(df.column("^GSPC").unwrap().f64().unwrap().get(1), None);
+        assert_eq!(
+            df.column("^GSPC").unwrap().f64().unwrap().get(2),
+            Some(153.0)
+        );
+    }
+
+    // --- Phase 02 null-fill checks ---
+
+    #[test]
+    fn test_ohlc_null_propagation() {
+        let dates: Vec<String> = (0..20).map(|i| format!("2026-06-{:02}", i + 1)).collect();
+        let closes: Vec<f64> = (0..20).map(|i| 100.0 + i as f64).collect();
+        let mut highs: Vec<Option<f64>> = (0..20).map(|i| Some(102.0 + i as f64)).collect();
+        let mut lows: Vec<Option<f64>> = (0..20).map(|i| Some(98.0 + i as f64)).collect();
+        let mut volumes: Vec<Option<f64>> = (0..20).map(|i| Some(1000.0 + i as f64)).collect();
+
+        // Inject missing values
+        highs[5] = None;
+        lows[10] = None;
+        volumes[15] = None;
+
+        let df = DataFrame::new(vec![
+            Series::new("date", dates),
+            Series::new("bitcoin_usd_high", highs),
+            Series::new("bitcoin_usd_low", lows),
+            Series::new("bitcoin_usd", closes),
+            Series::new("bitcoin_usd_volume", volumes),
+        ])
+        .unwrap();
+
+        let (res, _warnings) = compute_returns_and_indicators(&df, "bitcoin_usd").unwrap();
+
+        let atr = res.column("bitcoin_usd_atr_14").unwrap().f64().unwrap();
+        let stoch_k = res.column("bitcoin_usd_stoch_k_14").unwrap().f64().unwrap();
+        let adx = res.column("bitcoin_usd_adx_14").unwrap().f64().unwrap();
+        let obv = res.column("bitcoin_usd_obv").unwrap().f64().unwrap();
+
+        // ATR at index 5 should be None due to missing high
+        assert_eq!(atr.get(5), None);
+        // Stochastic at index 5 should be None due to missing high
+        assert_eq!(stoch_k.get(5), None);
+        // ADX at index 5 should be None
+        assert_eq!(adx.get(5), None);
+
+        // ATR at index 10 should be None due to missing low
+        assert_eq!(atr.get(10), None);
+        // Stochastic at index 10 should be None
+        assert_eq!(stoch_k.get(10), None);
+        // ADX at index 10 should be None
+        assert_eq!(adx.get(10), None);
+
+        // OBV at index 15 should be None due to missing volume
+        assert_eq!(obv.get(15), None);
+    }
+
+    // --- Phase 03 golden tests for technical indicators ---
+
+    #[test]
+    fn test_sma_golden() {
+        let prices = vec![10.0, 12.0, 14.0, 13.0, 15.0];
+        let sma = calculate_sma(&prices, 3);
+        assert_eq!(sma[0], None);
+        assert_eq!(sma[1], None);
+        assert!((sma[2].unwrap() - 12.0).abs() < 1e-6);
+        assert!((sma[3].unwrap() - 13.0).abs() < 1e-6);
+        assert!((sma[4].unwrap() - 14.0).abs() < 1e-6);
+
+        // period > data.len()
+        let sma_edge = calculate_sma(&prices, 10);
+        for val in sma_edge {
+            assert_eq!(val, None);
+        }
+    }
+
+    #[test]
+    fn test_ema_golden() {
+        let prices = vec![10.0, 12.0, 14.0, 16.0];
+        let ema = calculate_ema(&prices, 3);
+        assert_eq!(ema[0], None);
+        assert_eq!(ema[1], None);
+        assert!((ema[2].unwrap() - 12.0).abs() < 1e-6);
+        assert!((ema[3].unwrap() - 14.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_rsi_golden() {
+        // Uptrend
+        let mut up_prices = Vec::new();
+        for i in 0..20 {
+            up_prices.push(100.0 + i as f64 * 5.0);
+        }
+        let rsi_up = calculate_rsi(&up_prices, 14);
+        // Uptrend RSI should be close to 100.0 or rising
+        assert!(rsi_up[19].unwrap() > 90.0);
+
+        // Downtrend
+        let mut down_prices = Vec::new();
+        for i in 0..20 {
+            down_prices.push(200.0 - i as f64 * 5.0);
+        }
+        let rsi_down = calculate_rsi(&down_prices, 14);
+        assert!(rsi_down[19].unwrap() < 10.0);
+
+        // Sideways / Flat
+        let sideways = vec![150.0; 20];
+        let rsi_flat = calculate_rsi(&sideways, 14);
+        assert_eq!(rsi_flat[14], Some(50.0));
+        assert_eq!(rsi_flat[19], Some(50.0));
+    }
+
+    #[test]
+    fn test_bollinger_bands_golden() {
+        let prices = vec![10.0, 12.0, 14.0];
+        let (sma, upper, lower) = calculate_bollinger_bands(&prices, 3, 2.0);
+        assert_eq!(sma[0], None);
+        assert_eq!(upper[0], None);
+        assert_eq!(lower[0], None);
+
+        assert!((sma[2].unwrap() - 12.0).abs() < 1e-6);
+        assert!((upper[2].unwrap() - 15.265986).abs() < 1e-6);
+        assert!((lower[2].unwrap() - 8.734014).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_atr_golden() {
+        let high = vec![Some(12.0), Some(15.0), Some(16.0), Some(14.0)];
+        let low = vec![Some(8.0), Some(10.0), Some(12.0), Some(9.0)];
+        let close = vec![10.0, 13.0, 14.0, 11.0];
+
+        let atr = calculate_atr(&high, &low, &close, 3);
+        assert_eq!(atr[0], None);
+        assert_eq!(atr[1], None);
+        assert!((atr[2].unwrap() - 4.333333).abs() < 1e-6);
+        assert!((atr[3].unwrap() - 4.555556).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_stochastic_golden() {
+        let high = vec![Some(12.0), Some(15.0), Some(16.0), Some(14.0)];
+        let low = vec![Some(8.0), Some(10.0), Some(12.0), Some(9.0)];
+        let close = vec![10.0, 13.0, 14.0, 11.0];
+
+        let (percent_k, percent_d) = calculate_stochastic(&high, &low, &close, 3);
+        assert_eq!(percent_k[0], None);
+        assert_eq!(percent_k[1], None);
+        assert!((percent_k[2].unwrap() - 75.0).abs() < 1e-6);
+        assert!((percent_k[3].unwrap() - 28.571428).abs() < 1e-6);
+        assert_eq!(percent_d[3], None); // Not enough for 3-period SMA of %K yet
+    }
+
+    #[test]
+    fn test_obv_golden() {
+        let close = vec![10.0, 11.0, 9.0, 9.0];
+        let volume = vec![Some(100.0), Some(150.0), Some(120.0), Some(80.0)];
+        let obv = calculate_obv(&close, &volume);
+        assert_eq!(obv[0], Some(100.0));
+        assert_eq!(obv[1], Some(250.0));
+        assert_eq!(obv[2], Some(130.0));
+        assert_eq!(obv[3], Some(130.0));
+    }
+
+    #[test]
+    fn test_edge_cases_single_bar() {
+        let prices = vec![10.0];
+        let sma = calculate_sma(&prices, 3);
+        assert_eq!(sma[0], None);
+
+        let ema = calculate_ema(&prices, 3);
+        assert_eq!(ema[0], None);
+
+        let rsi = calculate_rsi(&prices, 3);
+        assert_eq!(rsi[0], None);
+    }
+
+    #[test]
+    fn test_nan_propagation_indicators() {
+        let prices = vec![10.0, f64::NAN, 12.0, 14.0];
+        let sma = calculate_sma(&prices, 3);
+        // Since there is a NaN, index 2 and 3 should have NaN
+        assert!(sma[2].unwrap().is_nan());
+        assert!(sma[3].unwrap().is_nan());
+
+        let ema = calculate_ema(&prices, 3);
+        assert!(ema[2].unwrap().is_nan());
+        assert!(ema[3].unwrap().is_nan());
+
+        let rsi = calculate_rsi(&prices, 3);
+        assert!(rsi[3].unwrap().is_nan());
+    }
+
+    #[test]
+    fn test_weekend_alignment_t1() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock", vec![50.0, 52.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], true).unwrap();
+        
+        assert_eq!(aligned.height(), 2);
+        
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-08"));
+        
+        let stock_col = aligned.column("stock").unwrap().f64().unwrap();
+        assert_eq!(stock_col.get(0), Some(50.0));
+        assert_eq!(stock_col.get(1), Some(52.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t2() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock", vec![50.0, 52.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], false).unwrap();
+        
+        assert_eq!(aligned.height(), 4);
+        
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-06"));
+        assert_eq!(date_col.get(2), Some("2026-06-07"));
+        assert_eq!(date_col.get(3), Some("2026-06-08"));
+        
+        let stock_col = aligned.column("stock").unwrap().f64().unwrap();
+        assert_eq!(stock_col.get(0), Some(50.0));
+        assert_eq!(stock_col.get(1), Some(50.0));
+        assert_eq!(stock_col.get(2), Some(50.0));
+        assert_eq!(stock_col.get(3), Some(52.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t3() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock_volume", vec![1000.0, 1200.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], false).unwrap();
+        
+        assert_eq!(aligned.height(), 4);
+        
+        let vol_col = aligned.column("stock_volume").unwrap().f64().unwrap();
+        assert_eq!(vol_col.get(0), Some(1000.0));
+        assert_eq!(vol_col.get(1), Some(0.0));
+        assert_eq!(vol_col.get(2), Some(0.0));
+        assert_eq!(vol_col.get(3), Some(1200.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t4() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09"]),
+            Series::new("crypto", vec![100.0, 101.0, 102.0, 103.0, 104.0]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-09"]),
+            Series::new("stock", vec![50.0, 52.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[stock_df], true).unwrap();
+
+        assert_eq!(aligned.height(), 3);
+
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-08"));
+        assert_eq!(date_col.get(2), Some("2026-06-09"));
+
+        let stock_col = aligned.column("stock").unwrap().f64().unwrap();
+        assert_eq!(stock_col.get(0), Some(50.0));
+        assert_eq!(stock_col.get(1), Some(50.0));
+        assert_eq!(stock_col.get(2), Some(52.0));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t5() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "not-a-date"]),
+            Series::new("crypto", vec![100.0, 101.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[], true).unwrap();
+        assert_eq!(aligned.height(), 2);
+        let date_col = aligned.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("not-a-date"));
+    }
+
+    #[test]
+    fn test_weekend_alignment_t6() {
+        let mut prices = Vec::new();
+        let start_ts = 1780617600000i64;
+        for i in 0..7 {
+            let ts = start_ts + i * 86400000;
+            prices.push(format!("[{}, {}]", ts, 100.0 + i as f64));
+        }
+        let json_data = format!(
+            r#"{{"prices": [{}], "total_volumes": []}}"#,
+            prices.join(",")
+        );
+
+        let df = parse_coingecko_market_chart(&json_data, "crypto").unwrap();
+        assert_eq!(df.height(), 7);
+
+        let date_col = df.column("date").unwrap().str().unwrap();
+        assert_eq!(date_col.get(0), Some("2026-06-05"));
+        assert_eq!(date_col.get(1), Some("2026-06-06"));
+        assert_eq!(date_col.get(2), Some("2026-06-07"));
+        assert_eq!(date_col.get(3), Some("2026-06-08"));
+        assert_eq!(date_col.get(4), Some("2026-06-09"));
+        assert_eq!(date_col.get(5), Some("2026-06-10"));
+        assert_eq!(date_col.get(6), Some("2026-06-11"));
+    }
+
+    #[test]
+    fn test_weekend_fill_t12a() {
+        let crypto_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08"]),
+            Series::new("crypto", vec![10.0, 10.5, 11.0, 11.5]),
+        ]).unwrap();
+
+        let stock_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-08"]),
+            Series::new("stock", vec![100.0, 102.0]),
+            Series::new("stock_volume", vec![1000.0, 1200.0]),
+        ]).unwrap();
+
+        let aligned_no_drop = align_datasets(&crypto_df, &[stock_df.clone()], false).unwrap();
+        assert_eq!(aligned_no_drop.height(), 4);
+        
+        let stock_col = aligned_no_drop.column("stock").unwrap().f64().unwrap();
+        let vol_col = aligned_no_drop.column("stock_volume").unwrap().f64().unwrap();
+        
+        assert_eq!(stock_col.get(0), Some(100.0));
+        assert_eq!(vol_col.get(0), Some(1000.0));
+        assert_eq!(stock_col.get(1), Some(100.0));
+        assert_eq!(vol_col.get(1), Some(0.0));
+        assert_eq!(stock_col.get(2), Some(100.0));
+        assert_eq!(vol_col.get(2), Some(0.0));
+        assert_eq!(stock_col.get(3), Some(102.0));
+        assert_eq!(vol_col.get(3), Some(1200.0));
+
+        let aligned_drop = align_datasets(&crypto_df, &[stock_df], true).unwrap();
+        assert_eq!(aligned_drop.height(), 2);
+        
+        let stock_col_d = aligned_drop.column("stock").unwrap().f64().unwrap();
+        let vol_col_d = aligned_drop.column("stock_volume").unwrap().f64().unwrap();
+        let date_col_d = aligned_drop.column("date").unwrap().str().unwrap();
+        
+        assert_eq!(date_col_d.get(0), Some("2026-06-05"));
+        assert_eq!(stock_col_d.get(0), Some(100.0));
+        assert_eq!(vol_col_d.get(0), Some(1000.0));
+        
+        assert_eq!(date_col_d.get(1), Some("2026-06-08"));
+        assert_eq!(stock_col_d.get(1), Some(102.0));
+        assert_eq!(vol_col_d.get(1), Some(1200.0));
+    }
+
+    #[test]
+    fn test_weekend_fill_t12b() {
+        let base_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-06", "2026-06-07"]),
+            Series::new("crypto", vec![10.0, 11.0, 12.0]),
+        ]).unwrap();
+
+        let other_df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-05", "2026-06-07"]),
+            Series::new("stock_volume", vec![1000.0, 1500.0]),
+        ]).unwrap();
+
+        let aligned = align_datasets(&base_df, &[other_df], false).unwrap();
+        let vol_col = aligned.column("stock_volume").unwrap().f64().unwrap();
+        
+        assert_eq!(vol_col.get(0), Some(1000.0));
+        assert_eq!(vol_col.get(1), Some(0.0));
+        assert_eq!(vol_col.get(2), Some(1500.0));
     }
 }

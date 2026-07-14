@@ -1,6 +1,6 @@
 # Data Processing & Portfolio Optimization
 
-[🏠 Home](../README.md) • [📖 Overview](README.md) • [🏗️ Architecture](architecture.md) • [💻 Setup](installation_usage.md) • [🔌 API & Cache](api_cache.md) • [📊 Processing & Optimization](analysis_optimization.md) • [🚀 Deployment](deployment.md)
+[🏠 Home](../README.md) • [📖 Overview](README.md) • [🏗️ Architecture](architecture.md) • [💻 Setup](installation_usage.md) • [🔌 API & Cache](api_cache.md) • [📊 Processing & Optimization](analysis_optimization.md) • [⚙️ Custom Strategies](custom_strategies.md) • [🚀 Deployment](deployment.md)
 
 ---
 
@@ -92,8 +92,9 @@ When running a multi-asset pipeline, CDG runs a Monte Carlo simulation (10,000 i
 1. **Daily Returns**: Computes daily percentage returns for each asset.
 2. **Mean & Covariance Matrix**: Calculates average daily returns $\mu_i$ and the asset covariance matrix $\Sigma$ across all non-null values.
 3. **Random Portfolios**: Uses a custom parallelized Xorshift random number generator with Rayon to draw asset weights $w$ satisfying $\sum w_i = 1$ and $w_i \ge 0$.
-4. **Annualization**: Annualized returns and volatility are scaled using a standard factor:
-   $$\text{Trading Days per Year} = 365.0$$
+4. **Annualization**: Annualized returns and volatility are scaled using a configurable factor:
+    $$\text{Annualization Factor} = \texttt{--annualization-factor}$$
+    *Defaults to `252.0` when `--drop-weekends` is active (traditional market trading days) and `365.0` otherwise.*
 5. **Portfolio Performance**:
    - **Annualized Return**:
      $$R_p = \sum_{i=1}^m w_i \mu_i \times 365$$

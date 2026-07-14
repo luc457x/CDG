@@ -9,25 +9,32 @@ reqwest = { version = "0.12", features = ["json", "native-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-polars = { version = "0.36", features = ["lazy", "temporal", "parquet", "csv"] }
+polars = { version = "0.36", features = ["lazy", "temporal", "parquet", "csv", "rolling_window"] }
 plotters = "0.3"
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
+futures = "0.3"
 indicatif = "0.17"
 cli-table = "0.4"
 dialoguer = "0.11"
 rayon = "1.8"
 async-trait = "0.1"
+tokio-util = "0.7"
 
 
 
 [profile.dev]
 codegen-units = 1
-debug = false
+# debug = 1 enables line-number level debug information in dev builds.
+# Use RUST_BACKTRACE=1 cargo run/test to get full backtraces.
+debug = 1
 
 [profile.release]
 codegen-units = 1
 debug = false
 
+[dev-dependencies]
+wiremock = "0.6.5"
+tempfile = "3"
 

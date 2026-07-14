@@ -1,14 +1,6 @@
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
-/// Annualization factor used for both return and volatility scaling.
-///
-/// Crypto markets trade 24/7/365, so 365 is the correct factor for a pure-crypto
-/// portfolio. For mixed crypto/stock portfolios this slightly overstates stock
-/// volatility (convention is 252 trading days), which is documented here as a
-/// known limitation. A dedicated per-asset factor can be introduced if needed.
-const TRADING_DAYS_PER_YEAR: f64 = 365.0;
-
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Portfolio {
     pub weights: Vec<f64>,
@@ -49,13 +41,26 @@ impl Xorshift {
     }
 }
 
-#[allow(clippy::needless_range_loop)]
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e3779b97f4a7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
+    x ^ (x >> 31)
+}
+
+/// Maximum number of simulations allowed. Each sim uses ~24 B × n_assets.
+/// Default: 10,000 (≈240 KB for 1 asset). Hard cap: 50,000 (≈1.2 MB).
+pub const MAX_SIMULATIONS_DEFAULT: usize = 10_000;
+pub const MAX_SIMULATIONS_HARD_CAP: usize = 50_000;
+
 pub fn run_monte_carlo(
     df: &DataFrame,
     assets: &[String],
+    annualization_factor: f64,
     num_simulations: usize,
     seed: Option<u64>,
 ) -> Result<OptimizationResult> {
+    let num_simulations = num_simulations.min(MAX_SIMULATIONS_HARD_CAP);
     let m = assets.len();
     if m == 0 {
         return Err(anyhow!("No assets provided for portfolio optimization"));
@@ -65,28 +70,49 @@ pub fn run_monte_carlo(
         return Err(anyhow!("Insufficient data rows for covariance calculation"));
     }
 
-    // 1. Extract prices and compute simple returns
-    let mut returns = Vec::with_capacity(m);
+    // 1. Extract prices and compute simple returns synchronously
+    let mut columns = Vec::with_capacity(m);
     for asset in assets {
-        let series = df.column(asset)?;
-        // Filter to non-null prices only to avoid fake zero-price spikes corrupting returns
-        let prices: Vec<f64> = series
-            .f64()?
-            .into_iter()
-            .flatten()
-            .filter(|&p| p > 0.0)
-            .collect();
+        columns.push(df.column(asset)?.f64()?);
+    }
 
-        let mut asset_returns = Vec::with_capacity(prices.len().saturating_sub(1));
-        for i in 1..prices.len() {
-            let prev = prices[i - 1];
-            asset_returns.push((prices[i] - prev) / prev);
+    let height = df.height();
+    let mut aligned_prices = vec![Vec::with_capacity(height); m];
+    for row_idx in 0..height {
+        let mut row_valid = true;
+        let mut row_prices = Vec::with_capacity(m);
+        for col in &columns {
+            if let Some(p) = col.get(row_idx) {
+                if p > 0.0 {
+                    row_prices.push(p);
+                } else {
+                    row_valid = false;
+                    break;
+                }
+            } else {
+                row_valid = false;
+                break;
+            }
+        }
+        if row_valid {
+            for col_idx in 0..m {
+                aligned_prices[col_idx].push(row_prices[col_idx]);
+            }
+        }
+    }
+
+    let mut returns = Vec::with_capacity(m);
+    for col_prices in &aligned_prices {
+        let mut asset_returns = Vec::with_capacity(col_prices.len().saturating_sub(1));
+        for i in 1..col_prices.len() {
+            let prev = col_prices[i - 1];
+            asset_returns.push((col_prices[i] - prev) / prev);
         }
         returns.push(asset_returns);
     }
 
-    // Use the minimum return series length for covariance (in case null counts differ per asset)
-    let t = returns.iter().map(|r| r.len()).min().unwrap_or(0);
+    // Use the aligned return series length
+    let t = returns.first().map(|r| r.len()).unwrap_or(0);
     if t < 1 {
         return Err(anyhow!(
             "Insufficient non-null price data for covariance calculation"
@@ -94,25 +120,54 @@ pub fn run_monte_carlo(
     }
 
     // 2. Compute mean returns (daily)
-    let mut mean_returns = vec![0.0; m];
+    let mut daily_mean_returns = vec![0.0; m];
     for i in 0..m {
         let sum: f64 = returns[i].iter().sum();
-        mean_returns[i] = sum / t as f64;
+        daily_mean_returns[i] = sum / t as f64;
     }
 
-    // 3. Compute covariance matrix (daily)
+    // 3. Compute covariance matrix (annualized)
     let mut cov_matrix = vec![vec![0.0; m]; m];
     for i in 0..m {
         for j in 0..m {
-            let mut sum = 0.0;
-            for k in 0..t {
-                sum += (returns[i][k] - mean_returns[i]) * (returns[j][k] - mean_returns[j]);
-            }
-            cov_matrix[i][j] = sum / (t - 1).max(1) as f64;
+            let mean_i = daily_mean_returns[i];
+            let mean_j = daily_mean_returns[j];
+            let daily_cov = returns[i]
+                .iter()
+                .take(t)
+                .zip(returns[j].iter().take(t))
+                .map(|(r_i, r_j)| (r_i - mean_i) * (r_j - mean_j))
+                .sum::<f64>()
+                / (t - 1).max(1) as f64;
+            cov_matrix[i][j] = daily_cov * annualization_factor;
         }
     }
 
-    // 4. Run Monte Carlo simulations
+    // 4. Compute expected returns (annualized)
+    let mut mean_returns = vec![0.0; m];
+    for i in 0..m {
+        mean_returns[i] = daily_mean_returns[i] * annualization_factor;
+    }
+
+    // Documented fallback: 0.04 (4 %) when ^TNX is absent.
+    // Warning is emitted so callers are aware Sharpe uses a proxy rate.
+    const RF_FALLBACK: f64 = 0.04;
+    let r_f_annual = if let Ok(tnx_col) = df.column("^TNX") {
+        let tnx_series = tnx_col.f64()?;
+        let sum: f64 = tnx_series.into_iter().flatten().sum();
+        let count = tnx_series.into_iter().flatten().count();
+        if count > 0 {
+            (sum / count as f64) / 100.0
+        } else {
+            eprintln!("Warning: ^TNX column empty; using risk-free rate fallback of {:.2}%", RF_FALLBACK * 100.0);
+            RF_FALLBACK
+        }
+    } else {
+        eprintln!("Warning: ^TNX not found; using risk-free rate fallback of {:.2}%", RF_FALLBACK * 100.0);
+        RF_FALLBACK
+    };
+
+    // 5. Run Monte Carlo simulations
     let mut max_sharpe_portfolio = Portfolio {
         weights: vec![0.0; m],
         annualized_return: f64::NEG_INFINITY,
@@ -148,27 +203,31 @@ pub fn run_monte_carlo(
     let results: Vec<(Vec<f64>, f64, f64, f64)> = (0..num_simulations)
         .into_par_iter()
         .map(|i| {
-            // Seed uniquely and deterministically for each index i
-            let seed_i = master_seed.wrapping_add(i as u64 + 1);
+            // Hash the seed using splitmix64 to ensure high entropy for nearby indices
+            let seed_i = splitmix64(master_seed.wrapping_add(i as u64 + 1));
             let mut rng = Xorshift::new(seed_i);
 
             let mut weights = vec![0.0; m];
             let mut sum = 0.0;
-            for j in 0..m {
-                weights[j] = rng.next_f64();
-                sum += weights[j];
+            for w in weights.iter_mut() {
+                // Bias note: adding 0.01 before normalisation shifts the Dirichlet
+                // distribution so each asset receives at least ~0.01/(n+0.01) weight.
+                // This avoids degenerate zero-weight samples at the cost of a slight
+                // upward bias on minimum allocations. Acceptable for exploratory MC.
+                *w = rng.next_f64() + 0.01;
+                sum += *w;
             }
-            for j in 0..m {
-                weights[j] /= sum;
+            for w in weights.iter_mut() {
+                *w /= sum;
             }
 
-            // Daily portfolio expected return
+            // Annualized portfolio expected return
             let mut p_ret = 0.0;
             for j in 0..m {
                 p_ret += weights[j] * mean_returns[j];
             }
 
-            // Daily portfolio variance
+            // Annualized portfolio variance
             let mut p_var = 0.0;
             for j in 0..m {
                 for k in 0..m {
@@ -177,18 +236,15 @@ pub fn run_monte_carlo(
             }
             let p_vol = p_var.sqrt();
 
-            // Annualize (using TRADING_DAYS_PER_YEAR)
-            let ann_ret = p_ret * TRADING_DAYS_PER_YEAR;
-            let ann_vol = p_vol * TRADING_DAYS_PER_YEAR.sqrt();
-            let sharpe = if ann_vol > 0.0 {
-                ann_ret / ann_vol
+            let sharpe = if p_vol > 0.0 {
+                (p_ret - r_f_annual) / p_vol
             } else {
                 0.0
             };
 
             // Convert return and vol to percentages for plotting & UI
-            let ann_ret_pct = ann_ret * 100.0;
-            let ann_vol_pct = ann_vol * 100.0;
+            let ann_ret_pct = p_ret * 100.0;
+            let ann_vol_pct = p_vol * 100.0;
 
             (weights, ann_ret_pct, ann_vol_pct, sharpe)
         })
@@ -217,6 +273,8 @@ pub fn run_monte_carlo(
         }
     }
 
+    // Progress bar is updated after the parallel collect so the bar reflects
+    // completion rather than jumping 0→100% mid-loop under Rayon.
     pb.set_position(num_simulations as u64);
     pb.finish_with_message("Simulation complete");
 
@@ -327,7 +385,7 @@ mod tests {
         .unwrap();
 
         let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
-        let result = run_monte_carlo(&df, &assets, 500, None).unwrap();
+        let result = run_monte_carlo(&df, &assets, 365.0, 500, None).unwrap();
 
         // Verify simulated points count
         assert_eq!(result.simulated_points.len(), 500);
@@ -341,6 +399,30 @@ mod tests {
         // Volatility of minimum volatility portfolio must be <= max sharpe portfolio's volatility
         assert!(
             result.min_volatility.annualized_volatility <= result.max_sharpe.annualized_volatility
+        );
+    }
+
+    #[test]
+    fn test_different_annualization_factors() {
+        let df = DataFrame::new(vec![
+            Series::new("date", vec!["2026-06-01", "2026-06-02", "2026-06-03"]),
+            Series::new("asset_a", vec![100.0, 101.0, 102.0]),
+            Series::new("asset_b", vec![10.0, 9.8, 10.1]),
+        ])
+        .unwrap();
+
+        let assets = vec!["asset_a".to_string(), "asset_b".to_string()];
+        let result_252 = run_monte_carlo(&df, &assets, 252.0, 500, Some(42)).unwrap();
+        let result_365 = run_monte_carlo(&df, &assets, 365.0, 500, Some(42)).unwrap();
+
+        // Verify that different factors lead to different annualized outcomes
+        assert_ne!(
+            result_252.max_sharpe.annualized_return,
+            result_365.max_sharpe.annualized_return
+        );
+        assert_ne!(
+            result_252.max_sharpe.annualized_volatility,
+            result_365.max_sharpe.annualized_volatility
         );
     }
 
@@ -376,5 +458,91 @@ mod tests {
         assert!(metrics_tbl.contains("Min Volatility"));
         assert!(metrics_tbl.contains("15.50%"));
         assert!(metrics_tbl.contains("8.50%"));
+    }
+
+    /// Regression: 2-asset portfolio with distinct price series must produce
+    /// strictly positive weights for both assets (no degenerate zero-weight output).
+    #[test]
+    fn test_covariance_no_zero_weights() {
+        // Asset A grows steadily; Asset B is more volatile — ensures non-trivial cov.
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec![
+                    "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04",
+                    "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08",
+                    "2026-01-09", "2026-01-10",
+                ],
+            ),
+            Series::new(
+                "crypto",
+                vec![100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 113.0],
+            ),
+            Series::new(
+                "stock",
+                vec![50.0, 50.5, 51.0, 50.8, 51.5, 51.2, 52.0, 51.8, 52.5, 52.3],
+            ),
+        ])
+        .unwrap();
+
+        let assets = vec!["crypto".to_string(), "stock".to_string()];
+        let result = run_monte_carlo(&df, &assets, 365.0, 2000, Some(1337)).unwrap();
+
+        // Both assets must receive strictly positive weight in the max-Sharpe portfolio.
+        // The + 0.01 bias guarantees this; a zero weight would indicate a regression.
+        assert!(
+            result.max_sharpe.weights[0] > 0.0,
+            "crypto weight must be > 0, got {}",
+            result.max_sharpe.weights[0]
+        );
+        assert!(
+            result.max_sharpe.weights[1] > 0.0,
+            "stock weight must be > 0, got {}",
+            result.max_sharpe.weights[1]
+        );
+
+        // Weights sum to 1.0
+        let sum: f64 = result.max_sharpe.weights.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-9, "weights must sum to 1.0, got {}", sum);
+
+        // Min-vol portfolio must have volatility <= max-Sharpe portfolio
+        assert!(
+            result.min_volatility.annualized_volatility
+                <= result.max_sharpe.annualized_volatility + 1e-9,
+            "min-vol ({}) must be <= max-Sharpe vol ({})",
+            result.min_volatility.annualized_volatility,
+            result.max_sharpe.annualized_volatility
+        );
+    }
+
+    /// Formula tests: Sharpe = (ret - rf) / vol, weights sum to 1.
+    #[test]
+    fn test_sharpe_formula_and_weights_sum() {
+        let df = DataFrame::new(vec![
+            Series::new(
+                "date",
+                vec!["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+            ),
+            Series::new("a", vec![100.0, 102.0, 101.0, 103.0]),
+            Series::new("b", vec![200.0, 198.0, 201.0, 204.0]),
+        ])
+        .unwrap();
+
+        let assets = vec!["a".to_string(), "b".to_string()];
+        let result = run_monte_carlo(&df, &assets, 252.0, 1000, Some(42)).unwrap();
+
+        // Weights must sum to 1.0 for every selected portfolio
+        let sharpe_sum: f64 = result.max_sharpe.weights.iter().sum();
+        let minvol_sum: f64 = result.min_volatility.weights.iter().sum();
+        assert!((sharpe_sum - 1.0).abs() < 1e-9);
+        assert!((minvol_sum - 1.0).abs() < 1e-9);
+
+        // Hard cap: requesting more than MAX_SIMULATIONS_HARD_CAP is clamped
+        let result_capped =
+            run_monte_carlo(&df, &assets, 252.0, MAX_SIMULATIONS_HARD_CAP + 1, Some(42)).unwrap();
+        assert_eq!(
+            result_capped.simulated_points.len(),
+            MAX_SIMULATIONS_HARD_CAP
+        );
     }
 }

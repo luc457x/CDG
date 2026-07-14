@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Result};
 
 pub fn validate_safe_path(path: &str) -> Result<()> {
+    if path.is_empty() {
+        return Err(anyhow!("Empty path is not allowed"));
+    }
     let p = std::path::Path::new(path);
     for component in p.components() {
         if let std::path::Component::ParentDir = component {
@@ -26,6 +29,7 @@ mod tests {
         assert!(validate_safe_path("normal.txt").is_ok());
         assert!(validate_safe_path("../traversal.txt").is_err());
         assert!(validate_safe_path("path/../traversal.txt").is_err());
+        assert!(validate_safe_path("").is_err());
     }
 
     #[test]

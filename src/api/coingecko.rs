@@ -5,10 +5,10 @@ use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct CoinSuggestion {
-    pub id: String,
-    pub symbol: String,
-    pub name: String,
+pub enum CoinResolution {
+    Exact(String),
+    Ambiguous(Vec<String>),
+    NotFound,
 }
 
 pub struct CoinGeckoClient {
@@ -16,17 +16,45 @@ pub struct CoinGeckoClient {
     cache: Arc<dyn CacheBackend>,
     base_url: String,
     ttl_secs: i64,
+    demo_key: Option<String>,
+    pro_key: Option<String>,
+    pb: Option<indicatif::ProgressBar>,
+    retry_delay_ms: u64,
 }
 
 impl CoinGeckoClient {
     pub fn new(cache: Arc<dyn CacheBackend>) -> Result<Self> {
+        let mut base_url = "https://api.coingecko.com/api/v3".to_string();
+        let mut demo_key = std::env::var("COINGECKO_DEMO_API_KEY").ok();
+        let mut pro_key = std::env::var("COINGECKO_PRO_API_KEY").ok();
+
+        if demo_key.is_none() && pro_key.is_none() {
+            if let Ok(key) = std::env::var("COINGECKO_API_KEY") {
+                let key_type = std::env::var("COINGECKO_API_KEY_TYPE").unwrap_or_default();
+                if key_type.to_lowercase() == "pro" {
+                    pro_key = Some(key);
+                } else {
+                    demo_key = Some(key);
+                }
+            }
+        }
+
+        if pro_key.is_some() {
+            base_url = "https://pro-api.coingecko.com/api/v3".to_string();
+        }
+
         Ok(Self {
             client: Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .timeout(std::time::Duration::from_secs(30))
                 .build()?,
             cache,
-            base_url: "https://api.coingecko.com/api/v3".to_string(),
+            base_url,
             ttl_secs: 300, // 5 minutes cache default
+            demo_key,
+            pro_key,
+            pb: None,
+            retry_delay_ms: 10000,
         })
     }
 
@@ -35,8 +63,18 @@ impl CoinGeckoClient {
         self
     }
 
+    pub fn with_progress_bar(mut self, pb: indicatif::ProgressBar) -> Self {
+        self.pb = Some(pb);
+        self
+    }
+
     pub fn with_base_url(mut self, base_url: String) -> Self {
         self.base_url = base_url;
+        self
+    }
+
+    pub fn with_retry_delay_ms(mut self, ms: u64) -> Self {
+        self.retry_delay_ms = ms;
         self
     }
 
@@ -59,46 +97,79 @@ impl CoinGeckoClient {
         if use_cache {
             if let Some(cached) = self.cache.get(&cache_url, self.ttl_secs).await? {
                 return Ok(cached);
+            } else {
+                eprintln!("Cache miss for URL: {}. Fetching fresh data.", cache_url);
             }
         }
 
         let mut attempts = 0;
         let max_attempts = 4;
-        let mut retry_delay = std::time::Duration::from_millis(10000);
+        let mut retry_delay = std::time::Duration::from_millis(self.retry_delay_ms);
 
         loop {
-            if attempts == 0 {
-                // Rate-limiting delay on cache misses to prevent CoinGecko API 429
-                #[cfg(not(test))]
-                {
-                    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
-                }
+            // Fetch from API using reqwest's built-in query encoding
+            let mut request_builder = self.client.get(&base_endpoint).query(query_params);
+
+            if let Some(ref key) = self.demo_key {
+                request_builder = request_builder.header("x-cg-demo-api-key", key);
+            } else if let Some(ref key) = self.pro_key {
+                request_builder = request_builder.header("x-cg-pro-api-key", key);
             }
 
-            // Fetch from API using reqwest's built-in query encoding
-            let response = self
-                .client
-                .get(&base_endpoint)
-                .query(query_params)
-                .send()
-                .await?;
+            let response = match request_builder.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    // Retry on timeout or connection errors
+                    let is_retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                    attempts += 1;
+                    if !is_retryable || attempts >= max_attempts {
+                        return Err(anyhow!(
+                            "CoinGecko request failed after {} attempt(s): {}",
+                            attempts,
+                            e
+                        ));
+                    }
+                    let msg = format!(
+                        "Warning: CoinGecko network error: {}. Retrying in {:.1}s... (Attempt {}/{})",
+                        e,
+                        retry_delay.as_secs_f32(),
+                        attempts,
+                        max_attempts
+                    );
+                    if let Some(ref pb) = self.pb {
+                        pb.set_message(msg);
+                    } else {
+                        eprintln!("{}", msg);
+                    }
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay *= 2;
+                    continue;
+                }
+            };
 
             let status = response.status();
 
-            if status == 429 {
+            if status == 429 || status.is_server_error() {
                 attempts += 1;
                 if attempts >= max_attempts {
                     return Err(anyhow!(
-                        "CoinGecko API Rate Limit Exceeded (429) after {} attempts",
+                        "CoinGecko API returned {} after {} attempts",
+                        status,
                         max_attempts
                     ));
                 }
-                eprintln!(
-                    "Warning: CoinGecko API Rate Limit Exceeded (429). Retrying in {:.1}s... (Attempt {}/{})",
+                let msg = format!(
+                    "Warning: CoinGecko API returned {}. Retrying in {:.1}s... (Attempt {}/{})",
+                    status,
                     retry_delay.as_secs_f32(),
                     attempts,
                     max_attempts
                 );
+                if let Some(ref pb) = self.pb {
+                    pb.set_message(msg);
+                } else {
+                    eprintln!("{}", msg);
+                }
                 tokio::time::sleep(retry_delay).await;
                 retry_delay *= 2;
                 continue;
@@ -110,6 +181,15 @@ impl CoinGeckoClient {
 
             let body = response.text().await?;
 
+            // Validate response body parses as JSON before storing in cache
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(&body) {
+                return Err(anyhow::anyhow!(
+                    "Invalid JSON response from CoinGecko: {}, body: {}",
+                    e,
+                    body
+                ));
+            }
+
             if use_cache {
                 self.cache.insert(&cache_url, &body).await?;
             }
@@ -119,7 +199,7 @@ impl CoinGeckoClient {
     }
 
     pub async fn ping(&self) -> Result<Value> {
-        let res = self.get_request("/ping", &[], false).await?;
+        let res = self.get_request("/ping", &[], true).await?;
         Ok(serde_json::from_str(&res)?)
     }
 
@@ -131,8 +211,43 @@ impl CoinGeckoClient {
     }
 
     pub async fn get_coins_list(&self) -> Result<Vec<Value>> {
-        let res = self.get_request("/coins/list", &[], true).await?;
-        Ok(serde_json::from_str(&res)?)
+        // /coins/list is static-ish; cache with 24h TTL regardless of client default.
+        const COINS_LIST_TTL: i64 = 86400;
+        let endpoint = "/coins/list";
+        let base_endpoint = format!("{}{}", self.base_url, endpoint);
+
+        // Check cache first with 24h TTL
+        let body = if let Some(cached) = self.cache.get(&base_endpoint, COINS_LIST_TTL).await? {
+            cached
+        } else {
+            eprintln!("Cache miss for URL: {}. Fetching fresh data.", base_endpoint);
+            // Not cached — perform network request (reuse get_request with cache disabled, then store manually)
+            let res = self.get_request(endpoint, &[], false).await?;
+            self.cache.insert(&base_endpoint, &res).await?;
+            res
+        };
+
+        let mut coins: Vec<Value> = serde_json::from_str(&body)?;
+        for coin in &mut coins {
+            if let Some(obj) = coin.as_object_mut() {
+                if let Some(id) = obj.get_mut("id") {
+                    if let Some(s) = id.as_str() {
+                        *id = Value::String(s.to_lowercase());
+                    }
+                }
+                if let Some(symbol) = obj.get_mut("symbol") {
+                    if let Some(s) = symbol.as_str() {
+                        *symbol = Value::String(s.to_lowercase());
+                    }
+                }
+                if let Some(name) = obj.get_mut("name") {
+                    if let Some(s) = name.as_str() {
+                        *name = Value::String(s.to_lowercase());
+                    }
+                }
+            }
+        }
+        Ok(coins)
     }
 
     pub async fn get_global(&self) -> Result<Value> {
@@ -216,13 +331,11 @@ impl CoinGeckoClient {
 
     pub async fn get_coin_tickers(&self, coin_id: &str, page: Option<u32>) -> Result<Value> {
         let endpoint = format!("/coins/{}/tickers", coin_id);
-        let page_str;
-        let query = if let Some(p) = page {
-            page_str = p.to_string();
-            vec![("page", page_str.as_str())]
-        } else {
-            vec![]
-        };
+        let mut query = Vec::new();
+        let page_str = page.map(|p| p.to_string());
+        if let Some(ref p_str) = page_str {
+            query.push(("page", p_str.as_str()));
+        }
         let res = self.get_request(&endpoint, &query, true).await?;
         Ok(serde_json::from_str(&res)?)
     }
@@ -239,23 +352,17 @@ impl CoinGeckoClient {
         Ok(serde_json::from_str(&res)?)
     }
 
-    pub async fn check_coin_id(&self, input: &str) -> Result<Option<Vec<CoinSuggestion>>> {
+    pub async fn check_coin_id(&self, input: &str) -> Result<CoinResolution> {
         let coin_list = self.get_coins_list().await?;
         let input_lower = input.to_lowercase();
 
         // Check exact ID match
-        let mut exact_id_found = false;
         for coin in &coin_list {
             if let Some(id) = coin.get("id").and_then(|v| v.as_str()) {
-                if id.to_lowercase() == input_lower {
-                    exact_id_found = true;
-                    break;
+                if id == input_lower {
+                    return Ok(CoinResolution::Exact(id.to_string()));
                 }
             }
-        }
-
-        if exact_id_found {
-            return Ok(None);
         }
 
         // Gather suggestions
@@ -263,54 +370,26 @@ impl CoinGeckoClient {
 
         // 1. Exact symbol matches
         for coin in &coin_list {
-            let id = coin
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let symbol = coin
-                .get("symbol")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let name = coin
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let id = coin.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let symbol = coin.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
 
-            if symbol.to_lowercase() == input_lower {
-                suggestions.push(CoinSuggestion { id, symbol, name });
+            if symbol == input_lower {
+                suggestions.push(id.to_string());
             }
         }
 
         // 2. Substring matches
         if suggestions.len() < 10 {
             for coin in &coin_list {
-                let id = coin
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let symbol = coin
-                    .get("symbol")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let name = coin
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let id = coin.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = coin.get("name").and_then(|v| v.as_str()).unwrap_or("");
 
-                if suggestions.iter().any(|s| s.id == id) {
+                if suggestions.contains(&id.to_string()) {
                     continue;
                 }
 
-                if id.to_lowercase().contains(&input_lower)
-                    || name.to_lowercase().contains(&input_lower)
-                {
-                    suggestions.push(CoinSuggestion { id, symbol, name });
+                if id.contains(&input_lower) || name.contains(&input_lower) {
+                    suggestions.push(id.to_string());
                     if suggestions.len() >= 10 {
                         break;
                     }
@@ -318,6 +397,12 @@ impl CoinGeckoClient {
             }
         }
 
-        Ok(Some(suggestions))
+        if suggestions.is_empty() {
+            Ok(CoinResolution::NotFound)
+        } else if suggestions.len() == 1 {
+            Ok(CoinResolution::Exact(suggestions[0].clone()))
+        } else {
+            Ok(CoinResolution::Ambiguous(suggestions))
+        }
     }
 }

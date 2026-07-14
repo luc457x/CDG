@@ -34,10 +34,12 @@ impl Cache {
             }
         }
 
-        use sqlx::sqlite::SqliteConnectOptions;
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
         let options = SqliteConnectOptions::new()
             .filename(db_path)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -50,34 +52,37 @@ impl Cache {
     }
 
     async fn init(&self) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "CREATE TABLE IF NOT EXISTS api_cache (
                 url TEXT PRIMARY KEY,
                 response_body TEXT NOT NULL,
                 cached_at_timestamp INTEGER NOT NULL
-            );",
+            );"
         )
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    pub async fn get_internal(&self, url: &str, ttl_secs: i64) -> Result<Option<String>> {
-        let row: Option<(String, i64)> = sqlx::query_as(
+    async fn get_internal(&self, url: &str, ttl_secs: i64) -> Result<Option<String>> {
+        if ttl_secs < 0 {
+            return Ok(None);
+        }
+
+        let row = sqlx::query!(
             "SELECT response_body, cached_at_timestamp FROM api_cache WHERE url = ?",
+            url
         )
-        .bind(url)
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some((body, timestamp)) = row {
+        if let Some(r) = row {
             let now = Utc::now().timestamp();
-            if now - timestamp < ttl_secs {
-                return Ok(Some(body));
+            if now - r.cached_at_timestamp < ttl_secs {
+                return Ok(Some(r.response_body));
             } else {
                 // Expired: delete it
-                sqlx::query("DELETE FROM api_cache WHERE url = ?")
-                    .bind(url)
+                sqlx::query!("DELETE FROM api_cache WHERE url = ?", url)
                     .execute(&self.pool)
                     .await?;
             }
@@ -85,15 +90,20 @@ impl Cache {
         Ok(None)
     }
 
-    pub async fn insert_internal(&self, url: &str, body: &str) -> Result<()> {
+    async fn insert_internal(&self, url: &str, body: &str) -> Result<()> {
+        const MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
+        if body.len() > MAX_BODY_BYTES {
+            return Err(anyhow::anyhow!("API response body exceeds maximum cached size of 10 MB"));
+        }
+
         let now = Utc::now().timestamp();
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR REPLACE INTO api_cache (url, response_body, cached_at_timestamp)
              VALUES (?, ?, ?)",
+            url,
+            body,
+            now
         )
-        .bind(url)
-        .bind(body)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -105,16 +115,18 @@ pub async fn check_cache_hits(
     urls: &[String],
     ttl_secs: i64,
 ) -> Result<(usize, usize)> {
-    let mut hits = 0;
     let total = urls.len();
     if total == 0 {
         return Ok((0, 0));
     }
-    for url in urls {
-        if cache.get(url, ttl_secs).await.ok().flatten().is_some() {
-            hits += 1;
+    let futures = urls.iter().map(|url| {
+        let cache = cache.clone();
+        async move {
+            cache.get(url, ttl_secs).await.ok().flatten().is_some()
         }
-    }
+    });
+    let results = futures::future::join_all(futures).await;
+    let hits = results.into_iter().filter(|&x| x).count();
     Ok((hits, total))
 }
 
@@ -164,6 +176,34 @@ mod tests {
         let (hits, total) = check_cache_hits(cache.clone(), &urls, 10).await.unwrap();
         assert_eq!(hits, 2);
         assert_eq!(total, 3);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn test_cache_negative_ttl() {
+        let db_path = "tests/test_cache_negative.db";
+        let _ = std::fs::remove_file(db_path);
+
+        let cache = Cache::new(db_path).await.unwrap();
+        cache.insert("http://test.com/api", "body").await.unwrap();
+
+        let val = cache.get("http://test.com/api", -1).await.unwrap();
+        assert_eq!(val, None);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn test_cache_max_body_bytes() {
+        let db_path = "tests/test_cache_max_body.db";
+        let _ = std::fs::remove_file(db_path);
+
+        let cache = Cache::new(db_path).await.unwrap();
+        // Create a 11 MB string
+        let large_string = "a".repeat(11 * 1024 * 1024);
+        let res = cache.insert("http://test.com/large", &large_string).await;
+        assert!(res.is_err());
 
         let _ = std::fs::remove_file(db_path);
     }
